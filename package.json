@@ -1,0 +1,67 @@
+{
+  "name": "dsh-qq-whale",
+  "version": "0.21.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "大肥鱼：DSH 的 QQ 伙伴，支持记忆、情绪、本地图片与语音理解、浏览器和创作工具。",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "lib/",
+    "client/",
+    "assets/",
+    "README.md",
+    "SKILL.md",
+    "LICENSE",
+    "requirements-speech.txt",
+    "INSTALL.cmd",
+    "install.ps1",
+    "TOOLS.md",
+    "tools/"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "qq",
+    "companion",
+    "memory",
+    "voice",
+    "browser"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@puppeteer/browsers": "^2.3.0",
+    "playwright-core": "^1.64.1",
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.3",
+    "undici": "^6.21.3"
+  },
+  "scripts": {
+    "verify:upgrade": "node tools/verify-upgrade.mjs",
+    "verify:integration": "node tools/verify-upgrade.mjs --integration",
+    "verify:qq": "node tools/verify-qq.mjs",
+    "verify:memory": "node tools/verify-memory-search.mjs",
+    "verify:release": "node tools/verify-release.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yeduwuren20000-del/dsh-qq-whale.git"
+  }
+}

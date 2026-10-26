@@ -1,0 +1,544 @@
+{
+  "version": 1,
+  "builtAt": "2026-10-25T11:51:54.303Z",
+  "packs": [
+    {
+      "id": "dafeiyu-001",
+      "name": "大肥鱼",
+      "description": "DeepSeek 鲸鱼娘 chibi 表情包，24 张：得意干饭生气疑问惊吓晕、比心害羞花痴睡觉打招呼躺平、无语求饶嫌弃加班震惊加载、点赞拒绝偷看飘了猫爪求打赏。",
+      "count": 24
+    },
+    {
+      "id": "dafeiyu-states",
+      "name": "大肥鱼在干嘛",
+      "description": "13 个状态的大肥鱼（DeepSeek 鲸鱼娘）立绘：赶稿、摆手、派活、点名、算账、润色、开干、查错、拧螺丝、歪头、举牌、点赞、待机。每个状态对应一道工序，拿来当进度播报的表情也能当表情包发。",
+      "count": 13
+    }
+  ],
+  "items": [
+    {
+      "id": "dafeiyu-001:memes/happy/deyi.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "happy",
+      "file": "dafeiyu-001__happy__deyi.jpg",
+      "caption": "得意闭眼拳头，好耶，小鲸鱼娘很满意",
+      "keywords": [
+        "得意",
+        "好耶",
+        "满意",
+        "拳头",
+        "开心",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/daily/ganfan.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "daily",
+      "file": "dafeiyu-001__daily__ganfan.jpg",
+      "caption": "捧着蓝碗干饭，星星眼吃得很香",
+      "keywords": [
+        "干饭",
+        "吃饭",
+        "饿",
+        "香",
+        "日常",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/angry/shengqi.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "angry",
+      "file": "dafeiyu-001__angry__shengqi.jpg",
+      "caption": "气鼓鼓叉腰，额头怒气符号，蒸汽直冒",
+      "keywords": [
+        "生气",
+        "愤怒",
+        "哼",
+        "叉腰",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/confused/wenhao.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "confused",
+      "file": "dafeiyu-001__confused__wenhao.jpg",
+      "caption": "疑惑举手，头顶大问号",
+      "keywords": [
+        "疑惑",
+        "问号",
+        "困惑",
+        "懵",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/surprised/xia.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "surprised",
+      "file": "dafeiyu-001__surprised__xia.jpg",
+      "caption": "吓到大叫，拳头握紧，感叹号",
+      "keywords": [
+        "惊吓",
+        "震惊",
+        "啊",
+        "大叫",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/sad/yun.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "sad",
+      "file": "dafeiyu-001__sad__yun.jpg",
+      "caption": "晕了，螺旋眼捂脸，脑子打结",
+      "keywords": [
+        "晕",
+        "崩溃",
+        "受不了",
+        "难过",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/like/bixin.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "like",
+      "file": "dafeiyu-001__like__bixin.jpg",
+      "caption": "双手比心卖萌，星星眼超开心",
+      "keywords": [
+        "比心",
+        "喜欢",
+        "卖萌",
+        "可爱",
+        "开心",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/shy/haixiu.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "shy",
+      "file": "dafeiyu-001__shy__haixiu.jpg",
+      "caption": "害羞捂脸，脸红红的",
+      "keywords": [
+        "害羞",
+        "腼腆",
+        "脸红",
+        "不好意思",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/color/huachi.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "color",
+      "file": "dafeiyu-001__color__huachi.jpg",
+      "caption": "爱心眼花痴，双手托腮",
+      "keywords": [
+        "花痴",
+        "心动",
+        "喜欢",
+        "爱心眼",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/sleep/shuijiao.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "sleep",
+      "file": "dafeiyu-001__sleep__shuijiao.jpg",
+      "caption": "抱小枕头睡觉，嘴角口水 zzz",
+      "keywords": [
+        "睡觉",
+        "困",
+        "晚安",
+        "熬夜",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/morning/zaoshanghao.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "morning",
+      "file": "dafeiyu-001__morning__zaoshanghao.jpg",
+      "caption": "早上好挥手打招呼，笑得很亮",
+      "keywords": [
+        "早上好",
+        "打招呼",
+        "你好",
+        "欢迎",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/work/tangping.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "work",
+      "file": "dafeiyu-001__work__tangping.jpg",
+      "caption": "摸鱼躺平，半睁眼摊着不想动",
+      "keywords": [
+        "摸鱼",
+        "躺平",
+        "下班",
+        "不想干活",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/sigh/wuyu.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "sigh",
+      "file": "dafeiyu-001__sigh__wuyu.jpg",
+      "caption": "无语死鱼脸，黑线加汗滴",
+      "keywords": [
+        "无语",
+        "无奈",
+        "叹气",
+        "黑线",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/sad/qiurao.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "sad",
+      "file": "dafeiyu-001__sad__qiurao.jpg",
+      "caption": "哭着双手合十求饶",
+      "keywords": [
+        "求饶",
+        "哭",
+        "委屈",
+        "对不起",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/baka/xianqi.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "baka",
+      "file": "dafeiyu-001__baka__xianqi.jpg",
+      "caption": "侧目嫌弃挥手，不想理你",
+      "keywords": [
+        "嫌弃",
+        "哼",
+        "傻瓜",
+        "吐槽",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/cpu/jiaban.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "cpu",
+      "file": "dafeiyu-001__cpu__jiaban.jpg",
+      "caption": "加班崩溃，电脑加咖啡，黑眼圈",
+      "keywords": [
+        "加班",
+        "工作",
+        "累",
+        "咖啡",
+        "卡了",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/see/zhenjing.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "see",
+      "file": "dafeiyu-001__see__zhenjing.jpg",
+      "caption": "惊吓跳起，眼睛圆圆嘴巴大张",
+      "keywords": [
+        "惊吓",
+        "震惊",
+        "看到了",
+        "哇",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/confused/jiazai.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "confused",
+      "file": "dafeiyu-001__confused__jiazai.jpg",
+      "caption": "托腮思考，头顶加载圈，脑子转不动",
+      "keywords": [
+        "思考",
+        "加载",
+        "卡顿",
+        "困惑",
+        "cpu",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/happy/ok.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "happy",
+      "file": "dafeiyu-001__happy__ok.jpg",
+      "caption": "眨眼竖大拇指 OK，超有信心",
+      "keywords": [
+        "点赞",
+        "ok",
+        "好的",
+        "自信",
+        "开心",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/fool/buyao.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "fool",
+      "file": "dafeiyu-001__fool__buyao.jpg",
+      "caption": "双手交叉摇头不行，拒绝",
+      "keywords": [
+        "不行",
+        "拒绝",
+        "不要",
+        "摇头",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/shy/toukan.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "shy",
+      "file": "dafeiyu-001__shy__toukan.jpg",
+      "caption": "躲在鲸鱼尾巴后面偷看，害羞",
+      "keywords": [
+        "偷看",
+        "害羞",
+        "腼腆",
+        "藏起来",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/happy/piaole.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "happy",
+      "file": "dafeiyu-001__happy__piaole.jpg",
+      "caption": "被夸飘了，闭眼伸手星星环绕",
+      "keywords": [
+        "得意",
+        "被夸",
+        "飘了",
+        "开心",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/meow/maozhua.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "meow",
+      "file": "dafeiyu-001__meow__maozhua.jpg",
+      "caption": "猫爪手势卖萌，小虎牙嘿嘿",
+      "keywords": [
+        "卖萌",
+        "猫爪",
+        "可爱",
+        "meow",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-001:memes/givemoney/yaoqian.jpg",
+      "pack": "dafeiyu-001",
+      "tag": "givemoney",
+      "file": "dafeiyu-001__givemoney__yaoqian.jpg",
+      "caption": "捧着小钱包亮晶晶期待，求零食钱",
+      "keywords": [
+        "求打赏",
+        "钱包",
+        "给钱",
+        "期待",
+        "大肥鱼"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/daily/gaogao.webp",
+      "pack": "dafeiyu-states",
+      "tag": "daily",
+      "file": "dafeiyu-states__daily__gaogao.webp",
+      "caption": "伏案在卷轴上写字，先把想法落成一份单",
+      "keywords": [
+        "赶稿",
+        "写单",
+        "拟稿",
+        "拆任务",
+        "列个计划"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/angry/refuse.webp",
+      "pack": "dafeiyu-states",
+      "tag": "angry",
+      "file": "dafeiyu-states__angry__refuse.webp",
+      "caption": "抬手挡下盖着「驳」字的文书，摇头不接",
+      "keywords": [
+        "摆手",
+        "打回",
+        "驳回",
+        "拒绝",
+        "不行"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/daily/assign.webp",
+      "pack": "dafeiyu-states",
+      "tag": "daily",
+      "file": "dafeiyu-states__daily__assign.webp",
+      "caption": "夹着工单板，指尖点着排期分派",
+      "keywords": [
+        "派活",
+        "分工",
+        "派单",
+        "排期",
+        "分派",
+        "分下去"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/daily/roster.webp",
+      "pack": "dafeiyu-states",
+      "tag": "daily",
+      "file": "dafeiyu-states__daily__roster.webp",
+      "caption": "举起「任」字印，翻名册逐个认人",
+      "keywords": [
+        "点名",
+        "名册",
+        "名单",
+        "清点",
+        "谁在岗"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/daily/budget.webp",
+      "pack": "dafeiyu-states",
+      "tag": "daily",
+      "file": "dafeiyu-states__daily__budget.webp",
+      "caption": "拨着算盘核账簿，眉头皱起来",
+      "keywords": [
+        "算账",
+        "预算",
+        "超支",
+        "花多少",
+        "记账"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/daily/polish.webp",
+      "pack": "dafeiyu-states",
+      "tag": "daily",
+      "file": "dafeiyu-states__daily__polish.webp",
+      "caption": "执笔停在书页边改字，字斟句酌",
+      "keywords": [
+        "润色",
+        "改文案",
+        "措辞",
+        "术语",
+        "翻译"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/daily/go.webp",
+      "pack": "dafeiyu-states",
+      "tag": "daily",
+      "file": "dafeiyu-states__daily__go.webp",
+      "caption": "拎着鲸鱼清单直指前方，说走就走",
+      "keywords": [
+        "开干",
+        "动手",
+        "部署",
+        "上线",
+        "执行"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/confused/audit.webp",
+      "pack": "dafeiyu-states",
+      "tag": "confused",
+      "file": "dafeiyu-states__confused__audit.webp",
+      "caption": "举着放大镜盯「审」字，逐条翻查",
+      "keywords": [
+        "查错",
+        "审查",
+        "复核",
+        "验证",
+        "检查"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/daily/code.webp",
+      "pack": "dafeiyu-states",
+      "tag": "daily",
+      "file": "dafeiyu-states__daily__code.webp",
+      "caption": "右手扳手左手齿轮图，眨眼调皮",
+      "keywords": [
+        "拧螺丝",
+        "写代码",
+        "搬砖",
+        "写函数"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/confused/ask.webp",
+      "pack": "dafeiyu-states",
+      "tag": "confused",
+      "file": "dafeiyu-states__confused__ask.webp",
+      "caption": "戳着脸颊歪头，举起「问」牌",
+      "keywords": [
+        "歪头",
+        "疑问",
+        "确认",
+        "不懂",
+        "什么意思"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/happy/accept.webp",
+      "pack": "dafeiyu-states",
+      "tag": "happy",
+      "file": "dafeiyu-states__happy__accept.webp",
+      "caption": "举着「圣」字令牌，怀里抱鲸鱼玩偶",
+      "keywords": [
+        "举牌",
+        "收到",
+        "接单",
+        "答应",
+        "接了"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/happy/done.webp",
+      "pack": "dafeiyu-states",
+      "tag": "happy",
+      "file": "dafeiyu-states__happy__done.webp",
+      "caption": "盖下「结案」章，再竖一个拇指",
+      "keywords": [
+        "点赞",
+        "收工",
+        "搞定",
+        "完成",
+        "交付"
+      ]
+    },
+    {
+      "id": "dafeiyu-states:memes/daily/idle.webp",
+      "pack": "dafeiyu-states",
+      "tag": "daily",
+      "file": "dafeiyu-states__daily__idle.webp",
+      "caption": "空着手歪头笑，悠闲待着什么也没拿",
+      "keywords": [
+        "待机",
+        "摸鱼",
+        "空闲",
+        "发呆",
+        "下班"
+      ]
+    }
+  ]
+}

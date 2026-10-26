@@ -1,0 +1,4 @@
+# Keep the legacy instance ID to reuse existing companion data.
+- insert:
+    - id: dsh-mentor
+      name: 'dsh-qq-whale'
