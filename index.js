@@ -22,12 +22,12 @@ import { add as addMemory, buildMemoryBlock, consolidate as consolidateMemory, f
 import { clockBlock, clockParts, dayKey, localHour } from './lib/clock.js'
 import { createStartupWatchdog } from './lib/qq-startup.js'
 import { findNapcat, launchQQ, loginQQ } from './lib/qq-login.js'
-import { componentStatus, startComponents } from './lib/components.js'
+import { componentStatus, dismissComponents, startComponents } from './lib/components.js'
 import { clearPlatformCookies } from './lib/browser-context.js'
 import { exportPlatformCookies, getBrowserContext } from './lib/browser-context.js'
 import { perceptionConfig, perceptionStatus, stopPerception, synthesizeVoice } from './lib/perception.js'
 import { registerCompanionTools } from './lib/companion-tools.js'
-import { makePostDraft, publishQzone, qzoneStatus, socialState, updatePost } from './lib/social.js'
+import { listQzoneComments, makePostDraft, publishQzone, qzoneStatus, replyConfig, replyQuota, replyQzoneComment, socialState, updatePost } from './lib/social.js'
 import { backgroundJSON } from './lib/background.js'
 import { autonomyConfig, autonomyState, browsePublicCandidates, canBrowse, readCandidate, recordAutonomy } from './lib/autonomy.js'
 import { editingStatus, registerEditingTool } from './lib/media-edit.js'
@@ -70,6 +70,7 @@ let shoutTick = null
 // 养成层定时器：apply() 可能跑多次，靠单例守卫避免重复起多个定时器。
 let growthStarted = false
 let growthTimer = null
+let replyTimer
 let autonomyTimer, autonomyTick, autonomyRefs = 0, autonomyBusy = false
 function shoutSchedule(ms) {
   if (shoutTimer) clearTimeout(shoutTimer)
@@ -110,7 +111,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.21.0',
+      version: '0.21.1',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -484,7 +485,7 @@ function applyInner(ctx) {
       )
       // 说说：她会时不时自言自语发一条到自己的 QQ 板子；被问到就聊这个功能，别装不知道。
       prompt.section(
-        { name: 'mentor:shout', order: 0.7, text: '你可以用companion qzoneDraft自己写QQ空间说说，只写你自己的感受和兴趣，不公开用户私聊、日记、行程或账号信息。草稿能在QQ面板看到；空间要先登录你自己的QQ。用户开启自动发表后可用qzonePublish发表；没有授权时保留草稿。发表结果以工具确认的动态为准。私聊碎碎念是另一种方式，不能说成已发空间。' },
+        { name: 'mentor:shout', order: 0.7, text: '你可以用companion qzoneDraft自己写QQ空间说说，只写你自己的感受和兴趣，不公开用户私聊、日记、行程或账号信息。草稿能在QQ面板看到；空间要先登录你自己的QQ。用户开启自动发表后可用qzonePublish发表；没有授权时保留草稿。别人在你空间说说下的评论可以用companion spaceComments看一眼，挑真感兴趣的用replyComment回，别条条都回。发表结果以工具确认的动态为准。私聊碎碎念是另一种方式，不能说成已发空间。' },
       )
       // 平台登录态：Cookie 导入（扫码登录受平台反爬限制，见 lib/logins.js）。
       prompt.section(
@@ -944,7 +945,7 @@ function applyInner(ctx) {
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.21.0',
+          version: '0.21.1',
           initializationError,
           clock: clockParts(),
           jev: { ok: probe.ok, url: JEV_URL, models: jev.models, detail: jev.detail },
@@ -1068,7 +1069,12 @@ function applyInner(ctx) {
 
       if (path === `${ROUTE_PREFIX}/api/components`) {
         if (method === 'GET') return sendJson(res, 200, await componentStatus())
-        if (method === 'POST') { const body = await readBody(req); return sendJson(res, 200, startComponents(body.selected)) }
+        if (method === 'POST') {
+          const body = await readBody(req)
+          // 只是「用户把工具准备关掉了」，不要再自动弹。
+          if (body.dismissed === true && !body.selected) return sendJson(res, 200, dismissComponents())
+          return sendJson(res, 200, startComponents(body.selected))
+        }
         return sendJson(res, 405, { ok: false, error: '只支持 GET / POST' })
       }
 
@@ -1132,7 +1138,30 @@ function applyInner(ctx) {
           if (post?.status !== 'uncertain' || body.checkedUnpublished !== true) return sendJson(res, 400, { ok: false, error: '请先到空间确认这条确实没有发表' })
           return sendJson(res, 200, { ok: true, post: updatePost(post.id, { status: 'draft', error: '', attemptedAt: 0 }), text: '已恢复草稿，可再次发表' })
         }
+        if (body.action === 'comments') {
+          try { return sendJson(res, 200, await listQzoneComments(qqId, { limit: Number(body.limit) || 8 })) }
+          catch (error) { return sendJson(res, 200, { ok: false, error: error.message }) }
+        }
+        if (body.action === 'reply') {
+          try { return sendJson(res, 200, await replyQzoneComment({ postId: String(body.postId || ''), commentId: String(body.commentId || ''), text: body.text, commentUin: body.commentUin, commentText: body.commentText }, qqId)) }
+          catch (error) { return sendJson(res, 200, { ok: false, error: error.message }) }
+        }
+        if (body.action === 'reply-config') return sendJson(res, 200, { ok: true, config: replyConfig(), quota: replyQuota(), replies: socialState().replies || [] })
+        if (body.action === 'reply-now') return sendJson(res, 200, await autoReplyComments())
         return sendJson(res, 400, { ok: false, error: '未知的空间操作' })
+      }
+
+      if (path === `${ROUTE_PREFIX}/api/browser`) {
+        if (method === 'GET') return sendJson(res, 200, { ok: true, actions: ['open', 'launch', 'goto', 'snapshot', 'screenshot', 'click', 'type', 'fill', 'press', 'wait', 'scroll', 'eval', 'info', 'close', 'frameclick', 'frameval', 'links', 'download'] })
+        const body = await readBody(req)
+        const action = String(body.action || body.params?.action || '')
+        if (!action) return sendJson(res, 400, { ok: false, error: '缺少 action' })
+        try {
+          const result = await browser.act(action, body.params || {})
+          return sendJson(res, 200, { ok: true, result })
+        } catch (error) {
+          return sendJson(res, 500, { ok: false, error: error?.message || String(error) })
+        }
       }
 
       if (path === `${ROUTE_PREFIX}/api/autonomy`) {
@@ -1600,6 +1629,15 @@ function applyInner(ctx) {
     } catch {
       // 说说调度起不来不影响 QQ 连接。
     }
+    // 空间评论：每 20 分钟看一眼，有额度、有人评论就让她自己挑着回。
+    try {
+      if (!replyTimer) {
+        replyTimer = setInterval(() => { if (!activeTurns) autoReplyComments().catch(() => {}) }, 20 * 60 * 1000)
+        replyTimer.unref?.()
+      }
+    } catch {
+      // 评论定时起不来不影响 QQ 连接。
+    }
     // 养成层（自由卡）：首次初始化即启用，之后全靠它长。
     // 启动后延迟一点再跑一次（避开装配高峰），之后每 30 分钟探一次，
     // 真正的成长由内部 6 小时冷却控制。
@@ -1689,6 +1727,44 @@ function applyInner(ctx) {
     }
   }
 
+  // ---- 空间评论自动回复：她在自己说说下挑评论回，次数按设置封顶 ----
+  let replyBusy = false
+  async function autoReplyComments() {
+    if (replyBusy || activeTurns) return { ok: false, error: '正在聊天或办事，稍后再回评论' }
+    const cfg = replyConfig()
+    if (!cfg.enabled) return { ok: false, error: '空间评论自动回复没打开' }
+    const quota = replyQuota()
+    if (quota <= 0) return { ok: false, error: `今天已经回满 ${cfg.maxPerDay} 条空间评论了` }
+    const id = qqConfig().selfId || qq.status().selfId
+    if (!id) return { ok: false, error: '还没确定大肥鱼的QQ号' }
+    replyBusy = true
+    try {
+      const listed = await listQzoneComments(id)
+      if (!listed.ok) throw new Error(listed.error || '读取空间评论失败')
+      const pending = listed.comments.slice(0, Math.min(quota, 3))
+      if (!pending.length) return { ok: true, replied: 0, text: '最近没有要回的空间评论' }
+      const written = await backgroundJSON({ ctx, agents, route: defaultRoute(),
+        job: `有人在你的QQ空间说说下面评论了。你可以挑真感兴趣的几条，用你自己的口吻简短回复（每条不超过30字，像真人随口一回：不客套、不重复、不编造没发生的事）。不想回就 leave。输出 {"replies":[{"commentId":"","text":""}]}，最多 ${pending.length} 条。`,
+        material: `现在：${clockBlock()}；你当前心情：${moodView(getMood()).label}。\n评论：${JSON.stringify(pending.map((c) => ({ commentId: c.commentId, from: c.name || c.uin, text: c.text, post: c.postText })))}`,
+      })
+      const wanted = new Map((Array.isArray(written.replies) ? written.replies : []).filter((r) => r && r.commentId && r.text).map((r) => [String(r.commentId), String(r.text)]))
+      let replied = 0
+      for (const c of pending) {
+        const text = wanted.get(String(c.commentId))
+        if (!text) continue
+        if (replyQuota() <= 0) break
+        try {
+          await replyQzoneComment({ postId: c.postId, commentId: c.commentId, text, commentUin: c.uin, commentText: c.text }, id)
+          replied += 1
+        } catch {
+          // 单条失败不挡着其他的
+        }
+      }
+      return { ok: true, replied, text: replied ? `在空间回了 ${replied} 条评论` : '这次先没回' }
+    } catch (error) { return { ok: false, error: error?.message || String(error) } }
+    finally { replyBusy = false }
+  }
+
   function tickShout() {
     const cfg = shoutConfig()
     if (!cfg.enabled) {
@@ -1765,6 +1841,10 @@ function applyInner(ctx) {
     if (growthTimer) {
       clearInterval(growthTimer)
       growthTimer = null
+    }
+    if (replyTimer) {
+      clearInterval(replyTimer)
+      replyTimer = undefined
     }
     growthStarted = false
     // 浏览器扫码的 Chrome 进程别留着（有窗口模式是屏幕外窗口，也该收）。

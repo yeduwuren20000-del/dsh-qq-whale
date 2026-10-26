@@ -34,6 +34,13 @@ await test('Clock questions read the clock without intercepting plans or class t
   assert.equal(timeReply('今天几点上课？'), null)
   assert.equal(timeReply('提醒我明天三点开会'), null)
 })
+await test('Class schedules and streaks use Beijing days and handle future-only logs', async () => {
+  const schedule = await import('../lib/schedule.js')
+  schedule.addCourse({ name: '周一测试课', day: 1, period: '08:00' })
+  assert.ok(schedule.todayCourses(new Date('2026-10-25T16:30:00Z')).some((r) => r.name === '周一测试课'))
+  store.recordTrail({ at: Date.now() + 86400000, text: 'future fixture' })
+  assert.equal(store.getProfile().streak, 0)
+})
 await test('Unrelated queries do not retrieve or reinforce memories', () => {
   memory.add({ text: '用户喜欢喝红茶', tags: ['饮食'], weight: 4, diary: false })
   assert.deepEqual(memory.relevant('调试数据库连接失败'), [])
@@ -71,7 +78,7 @@ await test('The user talking about being insulted is not scolding the fish', () 
   assert.equal(mood.refresh({ ...mood.defaultMood(t), mood: 'annoyed' }, t + 3600000).mood, 'calm')
 })
 await test('Media processing refuses remote endpoints', () => {
-  assert.throws(() => perception.localEndpoint('http://192.0.2.16:11434'))
+  assert.throws(() => perception.localEndpoint('http://10.2.0.16:11434'))
   assert.throws(() => perception.localEndpoint('http://example.com'))
   assert.throws(() => perception.localEndpoint('http://127.0.0.1.example.com'))
   assert.equal(perception.localEndpoint('http://127.0.0.1:11434'), 'http://127.0.0.1:11434')
@@ -88,6 +95,14 @@ await test('Qzone drafts are distinct from published posts; duplicate drafts are
   assert.equal(social.socialState().posts[0].status, 'uncertain')
   assert.equal(social.validDouyinVideo('https://www.douyin.com/video/123456'), true)
   assert.equal(social.validDouyinVideo('https://www.douyin.com.evil.example/video/123456'), false)
+})
+await test('Comment replies clamp the daily cap and reject empty input before touching the browser', async () => {
+  store.setSettings({ qq: { enabled: false, shout: { replyComments: { enabled: true, maxPerDay: 2 } } } })
+  assert.equal(social.replyConfig().maxPerDay, 2)
+  assert.equal(social.replyQuota(), 2)
+  await assert.rejects(() => social.replyQzoneComment({ postId: '', commentId: '1', text: '嗯' }, '77777'), /缺少/)
+  await assert.rejects(() => social.replyQzoneComment({ postId: 'p', commentId: '1', text: '   ' }, '77777'), /不能为空/)
+  assert.equal(social.replyQuota(), 2)
 })
 
 store.setSettings({ qq: { enabled: false }, autonomy: { enabled: false } })

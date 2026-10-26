@@ -2099,7 +2099,12 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         finally { setBusy(false) }
       }
       const running = data?.job?.running
-      return h(Drawer, { title: '工具准备', onClose },
+      // 关掉即记住：下次打开不再自动弹「工具准备」。
+      const dismissThenClose = () => {
+        void apiJson(`${API}/components`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dismissed: true }) }).catch(() => {})
+        onClose()
+      }
+      return h(Drawer, { title: '工具准备', onClose: dismissThenClose },
         h('p', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, '勾选你想用的功能，再统一准备。没有勾选的模型不会下载。所有聊天图片和语音都在自己的电脑处理。'),
         !data ? h('p', { role: 'status' }, '正在检查本机工具…') : data.components.map((c) => h('div', { key: c.id, style: { padding: '12px 0', borderBottom: '1px solid var(--dm-line)' } },
           h('label', { className: 'dm-check' }, h('input', { type: 'checkbox', checked: (selected || []).includes(c.id), disabled: busy || running, onChange: (e) => setSelected((old) => e.target.checked ? [...old, c.id] : old.filter((id) => id !== c.id)) }), `${c.name}${c.ready ? ' · 已就绪' : ''}`),
@@ -2135,8 +2140,9 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         setActionBusy(body.action || route); setLocalNotice('')
         try {
           const result = await apiJson(`${API}/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+          if (route === 'social' && result.needsLogin) setQzone(result)
           if (!result.ok) throw new Error(result.error || '这次没有完成')
-          if (route === 'social' && ['login', 'check'].includes(body.action)) { setQzone(result); setLocalNotice(result.logged ? '大肥鱼的空间已登录' : result.accountMismatch ? '当前是另一QQ账号，请切换为大肥鱼的账号' : '请用大肥鱼的QQ完成空间登录，再点检查登录') }
+          if (route === 'social' && ['login', 'check'].includes(body.action)) { setQzone(result); setLocalNotice(result.logged ? '大肥鱼的空间已登录' : result.accountMismatch ? '当前是另一QQ账号，请切换为大肥鱼的账号' : '请用大肥鱼的QQ扫描空间二维码，并在手机确认；会自动检查登录') }
           else if (result.url && route === 'perception') setSample(result.url)
           else setLocalNotice(result.text || '已保存')
           await state.loadQQ()
@@ -2167,6 +2173,23 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         }, 3000)
         return () => { active = false; clearInterval(timer) }
       }, [Boolean(qqLogin), Boolean(qqLogin?.logged), Boolean(qqLogin?.accountMismatch), Boolean(qqLogin?.needsSetup)])
+      useEffect(() => {
+        if (!qzone?.needsLogin || qzone.logged || qzone.accountMismatch) return
+        let active = true, busy = false
+        const timer = setInterval(async () => {
+          if (busy || document.hidden) return
+          busy = true
+          try {
+            const result = await apiJson(`${API}/social`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'check' }) })
+            if (active && result.logged) {
+              setQzone(result); setLocalNotice('大肥鱼的空间已登录，可以发表保留的草稿了')
+              await state.loadQQ()
+            }
+          } catch { /* Keep the QR visible while the user completes login. */ }
+          finally { busy = false }
+        }, 3000)
+        return () => { active = false; clearInterval(timer) }
+      }, [Boolean(qzone?.needsLogin), Boolean(qzone?.logged), Boolean(qzone?.accountMismatch)])
       const shoutKey = JSON.stringify(shout)
       useEffect(() => {
         state.loadQQ()
@@ -2273,6 +2296,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         h('button', { className: 'dm-btn', disabled: Boolean(actionBusy) || !state.qq?.perception?.tts, onClick: () => request('perception', { action: 'sample' }) }, actionBusy === 'sample' ? '正在准备声音…' : '试听当前声音'),
         sample ? h('audio', { controls: true, src: sample, style: { display: 'block', width: '100%', marginTop: '8px' } }) : null,
         h('div', { className: 'dm-sec' }, '空间说说与碎碎念'),
+        h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, 'QQ聊天和QQ空间需要分别登录；空间未登录时会保留草稿，不会发表。'),
         h('label', { className: 'dm-check', title: '开着后，大肥鱼会时不时自己写一条碎碎念发到下面选的 QQ 会话' },
           h('input', { type: 'checkbox', checked: Boolean(shoutDraft.enabled), onChange: (e) => setShoutDraft((r) => ({ ...r, enabled: e.target.checked })) }),
           '让她时不时写点什么'),
@@ -2286,8 +2310,17 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         shoutDraft.mode === 'qzone' ? h(React.Fragment, null,
           h('label', { className: 'dm-check' }, h('input', { type: 'checkbox', checked: Boolean(shoutDraft.autoPublish), onChange: (e) => setShoutDraft((r) => ({ ...r, autoPublish: e.target.checked })) }), '允许她自动发表到空间'),
           h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, '不开自动发表时只留草稿。发表使用大肥鱼的 QQ，谁能看见由她的空间可见范围决定；每天最多 3 条。'),
+          h('label', { className: 'dm-check', title: '别人在她说说下评论时，她会自己挑着回，每天有次数上限' },
+            h('input', { type: 'checkbox', checked: (shoutDraft.replyComments || {}).enabled !== false, onChange: (e) => setShoutDraft((r) => ({ ...r, replyComments: { enabled: e.target.checked, maxPerDay: Number((r.replyComments || {}).maxPerDay) || 5 } })) }),
+            '自动回复空间评论'),
+          h('div', { className: 'dm-qq-row' },
+            h('label', null, '每天最多回'),
+            h('input', { className: 'dm-input-sm dm-qq-num', type: 'number', min: 0, max: 30, value: Number((shoutDraft.replyComments || {}).maxPerDay ?? 5), onChange: (e) => setShoutDraft((r) => ({ ...r, replyComments: { enabled: (r.replyComments || {}).enabled !== false, maxPerDay: Math.max(0, Math.min(30, Number(e.target.value) || 0)) } })) }),
+            h('span', { className: 'dm-qq-meta' }, '条')),
           h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' } },
-            h('button', { className: 'dm-btn', disabled: Boolean(actionBusy), onClick: () => request('social', { action: 'login' }) }, actionBusy === 'login' ? '正在打开空间…' : '登录大肥鱼的空间'),
+            h('button', { className: 'dm-btn', disabled: Boolean(actionBusy), onClick: () => request('social', { action: 'reply-now' }) }, actionBusy === 'reply-now' ? '正在看评论…' : '现在回一次')),
+          h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '6px' } },
+            h('button', { className: 'dm-btn', disabled: Boolean(actionBusy), onClick: () => request('social', { action: 'login' }) }, actionBusy === 'login' ? '正在打开空间…' : (qzone?.needsLogin ? '刷新空间二维码' : '登录大肥鱼的空间')),
             h('button', { className: 'dm-btn', disabled: Boolean(actionBusy), onClick: () => request('social', { action: 'check' }) }, '检查登录'),
             h('button', { className: 'dm-btn', disabled: Boolean(actionBusy), onClick: () => request('social', { action: 'login', visible: true }) }, '在窗口中登录')),
           qzone?.shot ? h('img', { src: `${API}/shot?name=${encodeURIComponent(qzone.shot)}`, alt: '大肥鱼的QQ空间登录页面', style: { width: '100%', maxHeight: '320px', objectFit: 'contain', marginTop: '8px' } }) : null,
@@ -2323,6 +2356,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           state.qq.social.posts.slice(0, 6).map((post) => h('div', { key: post.id, style: { padding: '10px 0', borderBottom: '1px solid var(--dm-line)' } },
             h('div', { className: 'dm-qq-meta' }, `${({ draft: '草稿', published: '已发表', publishing: '发布中', uncertain: '待核实' })[post.status] || '草稿'} · ${new Date(post.at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`),
             h('p', { style: { whiteSpace: 'pre-wrap', lineHeight: 1.7, margin: '6px 0' } }, post.text),
+            post.error ? h('div', { className: 'dm-qq-hint', style: { whiteSpace: 'normal', marginBottom: '6px' } }, post.error) : null,
             post.status === 'draft' ? h('button', { className: 'dm-btn dm-btn-xs', disabled: Boolean(actionBusy), onClick: () => request('social', { action: 'publish', id: post.id }) }, '发表到空间') : null,
             post.url ? h('a', { href: post.url, target: '_blank', rel: 'noreferrer', className: 'dm-muted' }, '查看空间') : null,
             post.status === 'uncertain' ? h('div', { className: 'dm-muted' }, '先到空间确认，系统不会自动重复发表。') : null,
@@ -2352,6 +2386,146 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
               ),
             )
           : null,
+      )
+    }
+
+    /* ---------------------------------------------------------------- 课表 */
+
+    const WEEK_OPTS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+    const DAY_ORDER = { 周一: 1, 周二: 2, 周三: 3, 周四: 4, 周五: 5, 周六: 6, 周日: 7 }
+
+    function ScheduleDrawer(props) {
+      const { onClose } = props
+      const [courses, setCourses] = useState([])
+      const [remote, setRemote] = useState({ sshHost: '', studentId: '', enabled: false })
+      const [form, setForm] = useState({ day: '周一', name: '', period: '', location: '', teacher: '' })
+      const [busy, setBusy] = useState(false)
+      const [notice, setNotice] = useState('')
+
+      const reload = useCallback(async () => {
+        try {
+          const body = await apiJson(`${API}/schedule`)
+          setCourses(body.courses || [])
+          if (body.remote) setRemote(body.remote)
+        } catch {
+          setNotice('课表没加载出来（宿主可能还没起来）。')
+        }
+      }, [])
+
+      useEffect(() => { reload() }, [reload])
+
+      const setField = (key) => (event) => setForm((row) => ({ ...row, [key]: event.target.value }))
+
+      // 从配置的服务器同步（服务器上是学校教务的缓存库，按学号查）。
+      const syncRemote = async () => {
+        setBusy(true)
+        setNotice('')
+        try {
+          const r = await apiJson(`${API}/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'sync-remote', remote: { studentId: remote.studentId, sshHost: remote.sshHost } }),
+          })
+          if (!r.ok) {
+            setNotice(r.error || '同步失败')
+            return
+          }
+          setNotice(`已从 ${remote.sshHost} 同步：${r.synced} 门课（本地改动已备份为 courses.local.json）。`)
+          await reload()
+        } catch (error) {
+          setNotice(`同步失败：${error.message}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const add = async () => {
+        if (!form.name.trim()) { setNotice('课程名不能为空。'); return }
+        setBusy(true)
+        setNotice('')
+        try {
+          await apiJson(`${API}/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'add', ...form }),
+          })
+          setForm((row) => ({ ...row, name: '', period: '', location: '', teacher: '' }))
+          await reload()
+        } catch (error) {
+          setNotice(`加课失败：${error.message}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const remove = async (id) => {
+        try {
+          await apiJson(`${API}/schedule`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'remove', id }),
+          })
+          await reload()
+        } catch (error) {
+          setNotice(`删除失败：${error.message}`)
+        }
+      }
+
+      const grouped = WEEK_OPTS.map((label) => ({
+        label,
+        items: courses.filter((c) => DAY_ORDER[label] === c.day).sort((a, b) => String(a.period).localeCompare(String(b.period))),
+      })).filter((g) => g.items.length)
+
+      return h(
+        Drawer,
+        { title: '课表', onClose },
+        h('div', { className: 'dm-sec' }, '远程课表（自有服务器）'),
+        h('div', { className: 'dm-sched-form' },
+          h('input', {
+            className: 'dm-input-sm',
+            style: { width: '110px' },
+            value: remote.sshHost || '',
+            onChange: (e) => setRemote((r) => ({ ...r, sshHost: e.target.value })),
+            placeholder: 'ssh 别名',
+            title: '~/.ssh/config 里的 Host 别名，填写你自己的别名',
+          }),
+          h('input', {
+            className: 'dm-input-sm',
+            style: { width: '140px' },
+            value: remote.studentId || '',
+            onChange: (e) => setRemote((r) => ({ ...r, studentId: e.target.value })),
+            placeholder: '学号',
+          }),
+          h('button', { className: 'dm-btn dm-primary', disabled: busy || !remote.studentId, onClick: syncRemote, title: '从服务器拉课表覆盖本地（会先备份）' }, busy ? '同步中…' : '从服务器同步'),
+        ),
+        h('div', { className: 'dm-muted', style: { fontSize: '12px', margin: '2px 0 4px' } },
+          '启动时也会自动同步一次。同步是覆盖式：服务器为准，本地课表先备份成 courses.local.json。'),
+        h('div', { className: 'dm-sec' }, '加一门课'),
+        h('div', { className: 'dm-sched-form' },
+          h('select', { className: 'dm-input-sm', value: form.day, onChange: setField('day') },
+            WEEK_OPTS.map((d) => h('option', { key: d, value: d }, d))),
+          h('input', { className: 'dm-input-sm', value: form.name, onChange: setField('name'), placeholder: '课程名（必填）' }),
+          h('input', { className: 'dm-input-sm', value: form.period, onChange: setField('period'), placeholder: '节次/时间，如 第1节' }),
+          h('input', { className: 'dm-input-sm', value: form.location, onChange: setField('location'), placeholder: '地点' }),
+          h('input', { className: 'dm-input-sm', value: form.teacher, onChange: setField('teacher'), placeholder: '老师' }),
+          h('button', { className: 'dm-btn dm-primary', disabled: busy, onClick: add }, '加入课表'),
+        ),
+        notice ? h('div', { className: 'dm-muted', style: { margin: '6px 0' } }, notice) : null,
+        grouped.length
+          ? grouped.map((g) =>
+              h('div', { key: g.label, style: { marginTop: '10px' } },
+                h('div', { className: 'dm-sec' }, `${g.label} · ${g.items.length} 节`),
+                g.items.map((c) =>
+                  h('div', { className: 'dm-sched-row', key: c.id },
+                    h('div', { className: 'dm-sched-info' },
+                      h('b', null, `${c.period} ${c.name}`),
+                      h('span', { className: 'dm-sched-meta' }, `${c.teacher ? c.teacher + ' · ' : ''}${c.location || '无地点'}`)),
+                    h('button', { className: 'dm-btn dm-btn-xs', onClick: () => remove(c.id) }, '删'),
+                  ),
+                ),
+              ),
+            )
+          : h('div', { className: 'dm-muted', style: { marginTop: '10px' } }, '课表还是空的。上面的表单加一门，或直接把课程发到大肥鱼、让她帮你加。'),
       )
     }
 
@@ -3084,6 +3258,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         { id: 'chat', icon: 'chats', title: '会话', fixed: true },
         { id: 'memory', icon: 'diary', title: '记忆 / 日记' },
         { id: 'persona', icon: 'user', title: '性格（六维人格）' },
+        { id: 'schedule', icon: 'book', title: '课表' },
         { id: 'login', icon: 'shield', title: '平台登录（B站/抖音/小红书 Cookie）' },
         { id: 'components', icon: 'sliders', title: '工具准备：选择并一键安装' },
         { id: 'qq', icon: 'plug', title: qqOn ? 'QQ 已连接' : 'QQ 未连接', dot: qqOn },
@@ -3149,7 +3324,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       useEffect(() => {
         let active = true
         apiJson(`${API}/components`).then((result) => {
-          if (active && !Array.isArray(result.selected)) setPanel((old) => old || 'components')
+          if (active && !result.dismissed && !Array.isArray(result.selected)) setPanel((old) => old || 'components')
         }).catch(() => {})
         return () => { active = false }
       }, [])
@@ -3493,6 +3668,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
             )
           : null,
         panel === 'persona' ? h(PersonaDrawer, { persona: state.persona, presets: state.presets, onSave: state.savePersona, onClose: close, setup: state.setup, onSetup: state.saveSetup }) : null,
+        panel === 'schedule' ? h(ScheduleDrawer, { onClose: close }) : null,
         panel === 'login' ? h(LoginPanel, { onClose: close }) : null,
         panel === 'memory' ? h(MemoryDrawer, { state, onClose: close, startTab: memTab, onPick: () => fileRef.current?.click() }) : null,
         panel === 'components' ? h(ComponentsPanel, { onClose: close }) : null,
@@ -3552,7 +3728,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
               { className: 'dm-setup-ul' },
               h('li', null, '闲聊陪聊：像熟人一样自然回话，不塞知识点、不布置作业'),
               h('li', null, '记忆 & 日记：记住你说过的事，也会自己写日记复盘'),
-              h('li', null, '天气 / 文件：本地数据随问随答，文档能收能发'),
+              h('li', null, '课表 / 天气 / 文件：本地数据随问随答，文档能收能发'),
               h('li', null, 'QQ 说说：它按心情时不时自己发一条碎碎念'),
               h('li', null, '平台接管 & 扫码登录：抖音 / B站 / 小红书内容能抓、能扫码进'),
             ),
@@ -3686,7 +3862,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
     exports.inject = ['slots']
     exports.apply = apply
     // 设计预览用：tools/preview.mjs 拿它把窗口渲染成静态页再截图，不用开 GUI。
-    exports.__design = { Stage, Bubble, MentorPage, MODE_META, CSS, Drawer, PersonaDrawer, MemoryDrawer, QQPanel, ComponentsPanel, LoginPanel, Footprint, FileStrip, FilesTab, PERSONA_SCHEMA, DIM_IDS }
+    exports.__design = { Stage, Bubble, MentorPage, MODE_META, CSS, Drawer, PersonaDrawer, MemoryDrawer, QQPanel, ComponentsPanel, ScheduleDrawer, LoginPanel, Footprint, FileStrip, FilesTab, PERSONA_SCHEMA, DIM_IDS }
     return module.exports
   },
 })
