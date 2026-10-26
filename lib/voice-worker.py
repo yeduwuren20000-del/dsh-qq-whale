@@ -10,7 +10,6 @@ ROOT = Path(sys.argv[1])
 os.chdir(ROOT)
 ROOT = Path('.')
 ASR = None
-TTS = None
 
 
 def load_audio(file):
@@ -29,9 +28,9 @@ def load_audio(file):
 
 
 def run(job):
-    global ASR, TTS
-    import sherpa_onnx
+    global ASR
     if job["action"] == "asr":
+        import sherpa_onnx
         if ASR is None:
             model = ROOT / "sensevoice"
             ASR = sherpa_onnx.OfflineRecognizer.from_sense_voice(
@@ -46,29 +45,41 @@ def run(job):
             raise ValueError("没有听清这条语音")
         return {"text": text}
     if job["action"] == "tts":
-        if TTS is None:
-            model = ROOT / "kokoro-multi-lang-v1_0"
-            kokoro = sherpa_onnx.OfflineTtsKokoroModelConfig(
-                model=str(model / "model.onnx"), voices=str(model / "voices.bin"),
-                tokens=str(model / "tokens.txt"), data_dir=str(model / "espeak-ng-data"),
-                lexicon=",".join(str(model / n) for n in ["lexicon-us-en.txt", "lexicon-zh.txt"]),
-                dict_dir=str(model / "dict"),
-            )
-            config = sherpa_onnx.OfflineTtsConfig(
-                model=sherpa_onnx.OfflineTtsModelConfig(kokoro=kokoro, num_threads=4, provider="cpu"),
-                rule_fsts=",".join(str(model / n) for n in ["date-zh.fst", "number-zh.fst", "phone-zh.fst"]),
-                max_num_sentences=2,
-            )
-            TTS = sherpa_onnx.OfflineTts(config)
-        audio = TTS.generate(job["text"], sid=int(job.get("sid", 47)), speed=float(job.get("speed", 1)))
-        import numpy as np
-        with wave.open(job["file"], "wb") as out:
-            out.setnchannels(1)
-            out.setsampwidth(2)
-            out.setframerate(audio.sample_rate)
-            out.writeframes((np.clip(audio.samples, -1, 1) * 32767).astype("<i2").tobytes())
-        return {"file": job["file"], "sampleRate": audio.sample_rate}
+        return synthesize(job)
     raise ValueError("未知的语音动作")
+
+
+def synthesize(job):
+    """把文字交给本机 Breeze-TTS-2 服务合成，存成单声道 16bit WAV。"""
+    import json as _json
+    import urllib.request
+
+    base = str(job.get("breezeUrl") or "").rstrip("/")
+    if not base:
+        raise ValueError("本地语音后端没有启动")
+    payload = {"model": "breeze-tts-2", "input": str(job["text"])}
+    instruction = job.get("instruction")
+    if instruction:
+        payload["instruction"] = str(instruction)
+    if job.get("cfgScale"):
+        payload["cfg_scale"] = float(job["cfgScale"])
+    request = urllib.request.Request(
+        base + "/v1/audio/speech",
+        data=_json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        pcm = response.read()
+        rate = int(response.headers.get("X-Sample-Rate") or 24000)
+    if not pcm:
+        raise ValueError("语音后端没有返回音频")
+    with wave.open(job["file"], "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(pcm)
+    return {"file": job["file"], "sampleRate": rate}
 
 
 for line in sys.stdin:

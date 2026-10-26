@@ -111,7 +111,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.21.1',
+      version: '0.21.2',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -945,7 +945,7 @@ function applyInner(ctx) {
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.21.1',
+          version: '0.21.2',
           initializationError,
           clock: clockParts(),
           jev: { ok: probe.ok, url: JEV_URL, models: jev.models, detail: jev.detail },
