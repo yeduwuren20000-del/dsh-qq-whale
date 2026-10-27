@@ -31,7 +31,7 @@ import { registerCompanionTools } from './lib/companion-tools.js'
 import { listQzoneComments, makePostDraft, publishQzone, qzoneStatus, replyConfig, replyQuota, replyQzoneComment, socialState, updatePost } from './lib/social.js'
 import { backgroundJSON } from './lib/background.js'
 import { autonomyConfig, autonomyState, browsePublicCandidates, canBrowse, readCandidate, recordAutonomy } from './lib/autonomy.js'
-import { editingStatus, registerEditingTool } from './lib/media-edit.js'
+import { editingStatus, prepareAudioDelivery, registerEditingTool } from './lib/media-edit.js'
 import { timeReply } from './lib/time-reply.js'
 import { memoryScores, memorySearchStatus, primeMemorySearch } from './lib/memory-search.js'
 import { appendDiary, diaryStats, diaryToday, listDiary, parseDiaryPayload, recentDiary, renderDiaryBlock } from './lib/diary.js'
@@ -45,14 +45,13 @@ import * as browser from './lib/browser.js'
 import * as desktop from './lib/desktop.js'
 import { biliLoginState, cancelBiliLogin, pollBiliLogin, startBiliLogin } from './lib/biliqr.js'
 import { MAX_FILE, filesStats, findIn, handover as handoverFile, listFiles, mimeOf, renderFilesBlock, resolveOutbox, saveInbox } from './lib/files.js'
-import { countTokens, recordTurn, statsFor } from './lib/tokens.js'
+import { countTokens, statsFor, sourceLabel, usageMeter, trackUsage } from './lib/tokens.js'
+import { installToolAccess, restrictReflectionTools } from './lib/tool-access.js'
 import { fetchWeather } from './lib/weather.js'
 import { detectPlatform, fetchMedia } from './lib/media.js'
 import { appendShoutLog, composeShout, inQuietHours, pickInterval, readShoutLog, shoutDefaults } from './lib/shout.js'
 import { PLATFORMS as LOGIN_PLATFORMS, clearCookie, getCookie, loginStatus, setCookie } from './lib/logins.js'
 import { cancelQR as cancelBrowserQR, checkQR as checkBrowserQR, closeBrowser, findBrowser, startQR as startBrowserQR } from './lib/browserlogin.js'
-import { addCourse, currentTermWeek, getTermStart, listCourses, nextCourse, removeCourse, setTermStart, summarize as summarizeCourses, todayCourses, tomorrowCourses } from './lib/schedule.js'
-import { readRemoteConfig, syncRemoteCourses, writeRemoteConfig } from './lib/schedule-remote.js'
 
 export const name = 'dsh-mentor'
 export const inject = ['tools']
@@ -132,7 +131,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.21.4',
+      version: '0.21.8',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -394,12 +393,16 @@ function applyInner(ctx) {
       answer = await runTurn(session.id, msg.text, () => {}, {
         scene: { type: 'qq', kind: msg.scene, name: msg.nickname, chatId: msg.chatId },
         userVoice: msg.voice, onReplyPlan: (plan) => { voicePlan = plan },
+        onProgress: async (text) => {
+          await qq.sendMessage(msg.scene, msg.chatId, text)
+          appendMessage(session.id, { role: 'mentor', text, mode: decided.mode, progress: true })
+        },
       })
     } catch (error) {
       answer = `我这会儿卡住了：${error?.message || error}`
     }
 
-    if (!String(answer || '').trim()) answer = '嗯，我在。'
+    if (!String(answer || '').trim()) throw new Error('对话模型没有返回正文，请稍后重试')
     appendMessage(session.id, { role: 'mentor', text: answer, mode: decided.mode })
     setMood(observe(getMood(), 'turn-done'))
     appendJournal({ mode: 'qq', text: msg.text, note: answer.slice(0, 80) })
@@ -515,6 +518,8 @@ function applyInner(ctx) {
   }
 
   function defaultRoute() {
+    const selected = getSettings().chatModel
+    if (selected?.provider && selected?.model) return { provider: String(selected.provider), model: String(selected.model) }
     try {
       const service = ctx.get?.('agentDefaultModel')
       const selection = service?.currentSelection?.()
@@ -538,14 +543,20 @@ function applyInner(ctx) {
 
   async function ensureAgent(mentorId) {
     const entry = entryFor(mentorId)
-    if (entry.handle) return entry
+    const route = defaultRoute()
+    const modelSignature = JSON.stringify(route || null)
+    if (entry.handle && entry.modelSignature === modelSignature) return entry
+    if (entry.handle) {
+      await entry.handle.dispose?.()
+      entry.handle = undefined; entry.agent = undefined
+    }
     if (!agents || typeof agents.create !== 'function') {
       throw new Error('宿主没有 agent 服务，学伴无法开课')
     }
     const record = getSession(mentorId)
     const baseSessionId = `mentor-${mentorId}`
-    const route = defaultRoute()
-    const setup = (agentCtx) => {
+    const setup = (agentCtx, agent) => {
+      entry.toolStats = installToolAccess(agentCtx, agent)
       const prompt = agentCtx?.get ? agentCtx.get('systemPrompt') : undefined
       if (!prompt) return
       prompt.section({ name: 'mentor:persona', order: 0.5, text: PERSONA, interpolate: false })
@@ -614,20 +625,31 @@ function applyInner(ctx) {
       // 音乐：找歌/听歌走本机音乐插件引擎，别编歌单。
       prompt.section(
         { name: 'mentor:music', order: 0.66, text: '用户想听歌、找歌、问某首歌或歌手时，用 companion musicSearch 在网易云/酷我/酷狗/B站/QQ 等平台搜（platform 不传默认网易云）；搜到后用 musicPlay 带上 songId 拿本机播放地址，可以复制给用户在电脑上点开；要歌词用 musicLyric。只报工具真实返回的歌名、歌手、平台，不要编歌单、播放量或歌词。' },
-        { name: 'mentor:sing', order: 0.68, text: '用户想听你唱歌、或者你自己突然想唱一段时，用 companion sing 传 song（歌名，可带歌手，如「See You Again」）。它会在 3080Ti 上用你自己的女声声模把整首歌换成你的声音，一两分钟出成品；唱完用 handover 发文件给主人。唱之前先说一句要唱什么，别一声不响唱完。' },
+      )
+      prompt.section(
+        { name: 'mentor:sing', order: 0.68, text: '用户想听你唱歌、或者你自己突然想唱一段时，用 companion sing 传 song（歌名，可带歌手，如「See You Again」）。它会按用户配置运行声模，把歌换成你的声音；处理可能需要几分钟，系统会报告实际进度。唱歌工具会直接发送 QQ 语音，长歌分段发送，本机生成时尽量做好一段就发一段。不要 handover 歌曲文件；交付失败保留成品，如实报告，禁止换歌重唱。唱之前先说一句要唱什么，别一声不响唱完。' },
       )
       // 说说：她会时不时自言自语发一条到自己的 QQ 板子；被问到就聊这个功能，别装不知道。
       prompt.section(
-        { name: 'mentor:schedule', order: 0.67, text: '你知道他的课表：问他今天/明天有没有课、下一节是什么，用 companion schedule 查（它会返回今天、明天和最近的下一节课）。每天会按设置在他课前自动发消息提醒（默认提前30分钟），那是系统发的，你聊天时不要假装是你掐着点提醒的，也别重复提醒。' },
         { name: 'mentor:shout', order: 0.7, text: '你可以用companion qzoneDraft自己写QQ空间说说，只写你自己的感受和兴趣，不公开用户私聊、日记、行程或账号信息。草稿能在QQ面板看到；空间要先登录你自己的QQ。用户开启自动发表后可用qzonePublish发表；没有授权时保留草稿。别人在你空间说说下的评论可以用companion spaceComments看一眼，挑真感兴趣的用replyComment回，别条条都回。想点赞时用spaceFeeds读说说列表拿feedKey，再用likePost点；B站视频用likeVideo带bvid点。点赞是随手的社交动作，不要连点赞同一批，也不要拿它当任务刷。发表结果以工具确认的动态为准。私聊碎碎念是另一种方式，不能说成已发空间。' },
       )
       // 平台登录态：Cookie 导入（扫码登录受平台反爬限制，见 lib/logins.js）。
       prompt.section(
         { name: 'mentor:login', order: 0.72, text: '平台登录与实际操作已共用同一个独立浏览器档案。B站、抖音、小红书可在平台登录面板扫码，平台验证或扫码失败时让用户本人在浏览器完成登录，不代填密码。豆包、即梦通过平台登录面板打开登录窗口，登录后用同一账号生图或生成视频。QQ由NapCat负责；QQ空间需单独确认登录的是你自己的QQ。' },
       )
+      registerMentorTool(agentCtx, { runTurn, detectRoute, entryFor, pushFileToQQ })
+      registerMemoryTool(agentCtx, { scope: () => '' })
+      registerStickerTool(agentCtx, { sendToLastQQ })
       registerAutomationTools(agentCtx)
       registerEditingTool(agentCtx)
-      registerCompanionTools(agentCtx, { entry, qqId: () => qqConfig().selfId || qq.status().selfId })
+      registerCompanionTools(agentCtx, { entry, qqId: () => qqConfig().selfId || qq.status().selfId, songDelivery: {
+        ready: () => qq.status().status === 'connected' && Boolean(entry.scene?.type === 'qq' ? entry.scene.chatId : qqConfig().ownerId),
+        send: (file) => {
+          const scene = entry.scene?.type === 'qq' ? entry.scene : { kind: 'private', chatId: qqConfig().ownerId }
+          if (!scene.chatId) throw new Error('没有配置 QQ 语音接收人')
+          return qq.sendRecord(scene.kind, scene.chatId, file)
+        },
+      } })
     }
     const options = {
       meta: { cwd: process.cwd() },
@@ -645,6 +667,7 @@ function applyInner(ctx) {
     }
     entry.handle = handle
     entry.agent = handle.agent
+    entry.modelSignature = modelSignature
     return entry
   }
 
@@ -666,12 +689,15 @@ function applyInner(ctx) {
    * @param emit - (event, payload) => void
    */
   function runTurn(mentorId, text, emit, options = {}) {
+    if (activeTurns > 0) Promise.resolve().then(() => options.onProgress?.('上一项任务还在处理，你这条我收到了，做完接着回。')).catch(() => {})
     activeTurns += 1
     const entry = entryFor(mentorId)
     const run = turnChain.then(async () => {
+      entry.onProgress = async (text) => { emit('progress', { text }); await options.onProgress?.(text) }
       entry.scene = options.scene || null
       entry.userVoice = Boolean(options.userVoice)
       entry.replyVoice = null
+      entry.songResult = null
       entry.replyText = /(?:只|用|发)文字|别发语音|不方便听/.test(text)
       currentQuery = text
       activeScope = mentorId
@@ -696,11 +722,36 @@ function applyInner(ctx) {
       entry.memoryBlock = buildMemoryBlock(memoryQuery, semantic, mentorId)
       const current = await ensureAgent(mentorId)
       const agent = current.agent
-      let answer = ''
-      const off = ctx.on('agent/assistant-stream', ({ agent: subject, frame }) => {
-        if (subject !== agent || frame.type !== 'chunk') return
+      let answer = '', streamFailure, attemptAnswerStart = 0
+      const meter = usageMeter()
+      // 排障：DSH 的 agent 事件在插件侧 console.log 不可见，写进 diagnostics/turn.jsonl 才能看。
+      const dbg = { at: Date.now(), mentor: mentorId, seen: 0, delta: 0, kinds: {}, frames: {}, usage: null, follow: '', idleMs: 0, answerLen: 0, error: '' }
+      const off = ctx.on('agent/assistant-stream', (evt) => {
+        const subject = evt?.agent
+        const frame = evt?.frame
+        if (subject !== agent) {
+          dbg.other = (dbg.other || 0) + 1
+          return
+        }
+        meter.frame(frame)
+        const frameType = frame?.type || '?'
+        dbg.frames[frameType] = (dbg.frames[frameType] || 0) + 1
+        // The host can retry a failed attempt within this turn. Only the last attempt is terminal.
+        if (frameType === 'start') {
+          if (streamFailure) answer = answer.slice(0, attemptAnswerStart)
+          streamFailure = undefined
+          attemptAnswerStart = answer.length
+        }
+        if (frameType !== 'chunk') return
         const chunk = frame.chunk
-        if (chunk.type === 'text-delta') {
+        dbg.seen += 1
+        dbg.kinds[chunk?.type || '?'] = (dbg.kinds[chunk?.type || '?'] || 0) + 1
+        if (chunk?.type === 'usage') dbg.usage = chunk.usage || chunk
+        if (chunk?.type === 'finish' && ['error', 'aborted'].includes(chunk.reason?.kind)) {
+          streamFailure = new Error(chunk.reason.failure?.message || '本轮对话已中断')
+        }
+        if (chunk?.type === 'text-delta') {
+          dbg.delta += 1
           answer += chunk.text
           emit('delta', { text: chunk.text })
           return
@@ -708,6 +759,9 @@ function applyInner(ctx) {
         if (chunk.type === 'block-end' && chunk.block?.type === 'tool-call') {
           emit('tool', { name: chunk.block.name || 'tool' })
         }
+      })
+      const offError = ctx.on('agent/error', (evt) => {
+        if (evt?.agent === agent) streamFailure = evt.error instanceof Error ? evt.error : new Error(String(evt.error?.message || evt.error || '对话模型调用失败'))
       })
       const timer = setTimeout(() => {
         try {
@@ -719,26 +773,39 @@ function applyInner(ctx) {
       timer.unref?.()
       try {
         const message = await makeUserMessage(text)
-        agent.followup(message)
+        const startedAt = Date.now()
+        const ret = agent.followup(message)
+        dbg.follow = ret && typeof ret.then === 'function' ? 'promise' : typeof ret
+        await ret
         await agent.whenIdle()
+        dbg.idleMs = Date.now() - startedAt
+        if (streamFailure) throw streamFailure
+        if (!String(answer || '').trim()) throw new Error('对话模型没有返回正文，请检查模型配置或稍后重试')
+      } catch (error) {
+        dbg.error = String(error?.message || error)
+        throw error
       } finally {
         clearTimeout(timer)
         off()
+        offError()
+        dbg.answerLen = answer.length
+        try {
+          dbg.toolAccess = current.toolStats?.()
+          dbg.usageTotal = meter.total()
+          meter.record({ mode: getSession(mentorId)?.mode || 'chat', fallbackPrompt: estimatePromptTokens(mentorId, text), fallbackCompletion: dbg.error ? 0 : countTokens(answer) })
+          current.toolStats?.reset()
+          const dir = nodePath.join(dataDir(), 'diagnostics')
+          fs.mkdirSync(dir, { recursive: true })
+          fs.appendFileSync(nodePath.join(dir, 'turn.jsonl'), `${JSON.stringify(dbg)}\n`, 'utf8')
+        } catch {
+          // 诊断写不下去不影响对话。
+        }
         clearScene()
         currentScene = ''
       }
       options.onReplyPlan?.(entry.replyText ? null : entry.replyVoice || (options.userVoice ? {} : null))
-      // 记大肥鱼自己这一轮的 token 估算（不耗 token，纯计数）。只统计本插件作用域。
-      try {
-        const promptTokens = estimatePromptTokens(mentorId, text)
-        const completionTokens = countTokens(answer)
-        recordTurn({ mode: getSession(mentorId)?.mode || 'chat', prompt: promptTokens, completion: completionTokens })
-      } catch {
-        // 记不下去不影响这一轮对话。
-      }
       return answer
-    })
-    // chain 只用于排队，不让一次失败毒死后面所有回合。
+    })    // chain 只用于排队，不让一次失败毒死后面所有回合。
     entry.chain = run.then(
       () => { activeTurns -= 1 },
       () => { activeTurns -= 1 },
@@ -775,7 +842,7 @@ function applyInner(ctx) {
     if (!agents || typeof agents.create !== 'function') return { ok: false, error: '宿主没有 agent 服务' }
 
     let handle
-    let raw = ''
+    let raw = '', stopUsage
     try {
       const route = defaultRoute()
       handle = await agents.create({
@@ -783,6 +850,7 @@ function applyInner(ctx) {
         ...(route ? { agentOptions: route } : {}),
         sessionId: `mentor-diary-${Date.now().toString(36)}`,
         setup: (agentCtx) => {
+          restrictReflectionTools(agentCtx)
           const prompt = agentCtx?.get ? agentCtx.get('systemPrompt') : undefined
           if (!prompt) return
           // 日记得是「她」写的，不是通用模型写的：把人格卡带上，语气和称呼才对。
@@ -790,6 +858,7 @@ function applyInner(ctx) {
           prompt.section({ name: 'mentor:diary_job', order: 0.5, text: DIARY_JOB, interpolate: false })
         },
       })
+      stopUsage = trackUsage(ctx, handle.agent, { mode: 'diary', prompt: material, completion: () => raw })
       const off = ctx.on('agent/assistant-stream', ({ agent: subject, frame }) => {
         if (subject !== handle.agent || frame?.type !== 'chunk') return
         if (frame.chunk?.type === 'text-delta') raw += frame.chunk.text
@@ -803,6 +872,7 @@ function applyInner(ctx) {
     } catch (error) {
       return { ok: false, error: String(error?.message || error) }
     } finally {
+      stopUsage?.()
       try {
         await handle?.dispose?.()
       } catch {
@@ -1082,8 +1152,10 @@ function applyInner(ctx) {
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.21.4',
+          version: '0.21.8',
           initializationError,
+          chatModel: defaultRoute() || null,
+          toolAccess: [...live.values()].filter((row) => row.toolStats).map((row) => row.toolStats()),
           clock: clockParts(),
           jev: { ok: probe.ok, url: JEV_URL, models: jev.models, detail: jev.detail },
           modes: MODE_IDS,
@@ -1545,51 +1617,6 @@ function applyInner(ctx) {
       }
 
       // 天气：GET ?city=北京&days=1。Open-Meteo 免 key。前端和工具共用。
-      // 课表：本地 courses.json + 可选远程服务器同步。GET 看课表，POST 加/删/同步。
-      if (path === `${ROUTE_PREFIX}/api/schedule`) {
-        if (method === 'GET') {
-          const today = todayCourses()
-          const tomorrow = tomorrowCourses()
-          const next = nextCourse()
-          return sendJson(res, 200, {
-            ok: true,
-            courses: listCourses(),
-            remote: readRemoteConfig(),
-            termStart: getTermStart(),
-            termWeek: currentTermWeek(),
-            today,
-            tomorrow,
-            next: next ? { course: next.course, dayOffset: next.dayOffset } : null,
-            todayText: summarizeCourses(today, '今天'),
-            tomorrowText: summarizeCourses(tomorrow, '明天'),
-          })
-        }
-        if (method === 'POST') {
-          const body = await readBody(req)
-          const action = String(body?.action || '')
-          if (action === 'term-start') {
-            setTermStart(String(body?.termStart || ''))
-            return sendJson(res, 200, { ok: true, termStart: getTermStart(), termWeek: currentTermWeek() })
-          }
-          if (action === 'add') {
-            const course = addCourse(body)
-            if (!course) return sendJson(res, 400, { ok: false, error: '课程名和星期都要填' })
-            return sendJson(res, 200, { ok: true, course })
-          }
-          if (action === 'remove') {
-            return sendJson(res, 200, { ok: removeCourse(String(body?.id || '')) })
-          }
-          if (action === 'sync-remote') {
-            const patch = body?.remote && typeof body.remote === 'object' ? body.remote : {}
-            const cfg = writeRemoteConfig({ enabled: true, ...patch })
-            if (!String(cfg.studentId || '').trim()) return sendJson(res, 400, { ok: false, error: '先填学号' })
-            const r = await syncRemoteCourses(cfg)
-            return sendJson(res, 200, r.ok ? { ok: true, synced: r.count } : { ok: false, error: r.error })
-          }
-          return sendJson(res, 400, { ok: false, error: `不认识的课表动作：${action}` })
-        }
-      }
-
       if (path === `${ROUTE_PREFIX}/api/weather` && method === 'GET') {
         const city = decodeURIComponent((url.searchParams.get('city') || '').trim())
         const days = Number(url.searchParams.get('days') || '1')
@@ -2108,56 +2135,6 @@ function applyInner(ctx) {
   }
 
   // ---- 上课提醒：课前 N 分钟吱一声（默认 30 分钟）；同一节课只提醒一次 ----
-  const SECTION_START = {
-    1: '08:00', 2: '08:55', 3: '10:00', 4: '10:55', 5: '14:00', 6: '14:55',
-    7: '16:00', 8: '16:55', 9: '19:00', 10: '19:55', 11: '20:50', 12: '21:45',
-  }
-  let classTimer
-  let classBusy = false
-  const remindedClasses = new Set()
-  function classLeadMinutes() {
-    const cfg = getSettings().schedule || {}
-    const n = Number(cfg.reminderMinutes)
-    return Number.isFinite(n) && n > 0 ? Math.min(240, Math.max(5, n)) : 30
-  }
-  function classStartMinutes(period) {
-    const m = String(period || '').match(/第\s*(\d+)/)
-    if (!m) return null
-    const hm = SECTION_START[Number(m[1])]
-    if (!hm) return null
-    const [h, mi] = hm.split(':').map(Number)
-    return h * 60 + mi
-  }
-  async function classTick() {
-    if (classBusy || activeTurns) return
-    const cfg = getSettings().schedule || {}
-    if (cfg.enabled === false) return
-    const now = new Date()
-    const next = nextCourse(now)
-    if (!next || next.dayOffset !== 0) return
-    const start = classStartMinutes(next.course.period)
-    if (start == null) return
-    const nowMin = now.getHours() * 60 + now.getMinutes()
-    const lead = start - nowMin
-    const limit = classLeadMinutes()
-    if (lead <= 0 || lead > limit) return
-    const key = `${dayKey(now)}|${next.course.id}|${next.course.name}`
-    if (remindedClasses.has(key)) return
-    remindedClasses.add(key)
-    if (remindedClasses.size > 200) remindedClasses.clear()
-    const owner = String(qqConfig().ownerId || qq.status().selfId || '').trim()
-    const text = `等下 ${next.course.period} 有《${next.course.name}》${next.course.location ? `，在 ${next.course.location}` : ''}${lead > 1 ? `，还有 ${lead} 分钟` : '，马上就开始'}。`
-    classBusy = true
-    try {
-      if (owner) await qq.sendMessage('private', owner, text)
-      appendShoutLog(`[上课提醒] ${text}`, Date.now(), { channel: 'class' })
-    } catch (error) {
-      console.error('[dsh-mentor] 上课提醒没发出去：', error?.message || error)
-    } finally {
-      classBusy = false
-    }
-  }
-
   // ---- 空间评论自动回复：她在自己说说下挑评论回，次数按设置封顶 ----
   let replyBusy = false
   async function autoReplyComments() {
@@ -2271,12 +2248,6 @@ function applyInner(ctx) {
   // 设置里开着 QQ 就在启动时连上；网关没跑会自动拉起，所以「打开 DSH 大肥鱼就已经连上 QQ」。
   let stopQQWatchdog
   bootQQ()
-  // 课表：配了远程就静默同步一次；再起上课提醒的定时器（每分钟看一眼，到点发 QQ）。
-  const remoteSchedule = readRemoteConfig()
-  if (remoteSchedule.enabled && String(remoteSchedule.studentId || '').trim()) {
-    setTimeout(() => { void syncRemoteCourses().catch(() => {}) }, 8000).unref?.()
-  }
-  if (!classTimer) { classTimer = setInterval(() => { void classTick() }, 60 * 1000); classTimer.unref?.() }
   const memoryWarmup = setTimeout(() => { void primeMemorySearch() }, 10000)
   memoryWarmup.unref?.()
   // 语音后端也提前拉起来：否则第一次发语音要等模型加载半分钟。
@@ -2317,10 +2288,6 @@ function applyInner(ctx) {
       clearInterval(proactiveTimer)
       proactiveTimer = null
     }
-    if (classTimer) {
-      clearInterval(classTimer)
-      classTimer = undefined
-    }
     growthStarted = false
     // 浏览器扫码的 Chrome 进程别留着（有窗口模式是屏幕外窗口，也该收）。
     closeBrowser().catch(() => {})
@@ -2337,9 +2304,7 @@ function applyInner(ctx) {
     }
     live.clear()
   })
-  registerMentorTool(ctx, { runTurn, detectRoute, entryFor, pushFileToQQ })
-  registerMemoryTool(ctx, { scope: () => '' })
-  registerStickerTool(ctx, { sendToLastQQ })
+  registerMentorTool(ctx, { runTurn, detectRoute, entryFor, pushFileToQQ }, { entryOnly: true })
 
 }
 
@@ -2698,9 +2663,10 @@ function registerMemoryTool(ctx, deps = {}) {
  * 给主对话一个「把这个问题交给学伴」的入口。
  * 做成工具而不是隐藏 API：主 agent 自己就能决定什么时候该请教老师。
  */
-function registerMentorTool(ctx, deps) {
+function registerMentorTool(ctx, deps, { entryOnly = false } = {}) {
   if (!ctx.tools || typeof ctx.tools.register !== 'function') return
 
+  if (!entryOnly) {
   ctx.tools.register({
     name: 'handover',
     description:
@@ -2728,10 +2694,11 @@ function registerMentorTool(ctx, deps) {
     },
     async execute(args) {
       try {
-        const row = handoverFile(args?.path, args?.name)
+        const delivery = await prepareAudioDelivery(args?.path, args?.name)
+        const row = handoverFile(delivery.file, delivery.name)
         if (!row) return { ok: false, text: '没交付成功：文件是空的。' }
         const size = row.size >= 1024 * 1024 ? `${(row.size / 1024 / 1024).toFixed(1)}MB` : `${Math.max(1, Math.round(row.size / 1024))}KB`
-        let text = `已放进发件箱：${row.name}（${size}）。用户现在能在聊天里点下载。`
+        let text = `${delivery.converted ? '大音频已自动转为 MP3。' : ''}已放进发件箱：${row.name}（${size}）。用户现在能在聊天里点下载。`
         // 默认就试着发一份到 QQ：她产出的东西，主人在手机上也该直接拿到。
         // 显式 toQQ:false 才拦；桌面上还没有 QQ 会话时静默跳过，不打扰。
         const wantQQ = args?.toQQ !== false
@@ -2753,7 +2720,7 @@ function registerMentorTool(ctx, deps) {
       '查大肥鱼自己的 token 消耗（本地记录，不耗 token，也不碰主对话）。' +
       '用户问「今天/最近花了多少 token」「用了多少」时用它拿真实数字，不要自己编。' +
       'action=today 看今天；action=week 看最近 7 天；action=all 看累计。' +
-      '数字是本地估算，不是供应商账单精确值。',
+      '优先采用宿主回传用量，缺少时估算；不能换算成账单金额。',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -2781,7 +2748,7 @@ function registerMentorTool(ctx, deps) {
           ok: true,
           text:
             `今天（${stats.today}）大肥鱼消耗约 ${total} token（提示 ${t.prompt || 0} + 生成 ${t.completion || 0}），共 ${t.turns || 0} 轮。` +
-            `（本地估算${stats.source === 'host' ? '，已接宿主真实用量' : ''}，非账单精确值）`,
+            `（${sourceLabel(stats.source)}，非金额账单）`,
         }
       }
       if (action === 'week') {
@@ -2793,9 +2760,8 @@ function registerMentorTool(ctx, deps) {
         return { ok: true, text: `最近 7 天大肥鱼累计约 ${total} token（${stats.totalTurns} 轮）：\n${lines.join('\n')}` }
       }
       // all
-      const all = stats.series || []
-      const grand = all.reduce((a, s) => a + s.prompt + s.completion, 0)
-      const turns = all.reduce((a, s) => a + s.turns, 0)
+      const grand = stats.lifetime.tokens
+      const turns = stats.lifetime.turns
       return { ok: true, text: `大肥鱼累计（有记录以来）约 ${grand} token，共 ${turns} 轮。` }
     },
   })
@@ -2853,6 +2819,8 @@ function registerMentorTool(ctx, deps) {
       return { ok: true, text: r.text }
     },
   })
+
+  }
 
   ctx.tools.register({
     name: 'mentor',

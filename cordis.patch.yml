@@ -1,4 +1,4 @@
-# dsh bundle patch: 把学伴插件插进 profile 的层栈。
+# Keep the legacy instance ID to reuse existing companion data.
 - insert:
     - id: dsh-mentor
-      name: 'dsh-mentor'
+      name: 'dsh-qq-whale'

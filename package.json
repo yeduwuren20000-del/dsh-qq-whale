@@ -1,10 +1,10 @@
 {
-  "name": "dsh-mentor",
-  "version": "0.21.4",
+  "name": "dsh-qq-whale",
+  "version": "0.21.8",
   "private": true,
   "type": "module",
   "main": "index.js",
-  "description": "大肥鱼 (dsh-mentor)：住在 DSH 里的蓝白鲸鱼，爱吃白饭（token）、聪明但懒、傲娇嘴硬。想到什么说什么，她自己判断该陪着聊还是把事办掉；干活能接管浏览器（抖音/小红书/B站发布、填表上传）与本机窗口。",
+  "description": "大肥鱼：DSH 的 QQ 伙伴，支持记忆、情绪、本地媒体理解、浏览器、创作和分段唱歌语音。",
   "exports": {
     ".": "./index.js",
     "./client": "./client/client.js",
@@ -29,13 +29,12 @@
     "assets/",
     "runtime/",
     "tools/",
-    "RELEASE_0.20.0.md",
-    "RELEASE_0.20.1.md",
-    "RELEASE_0.21.1.md",
-    "RELEASE_0.21.2.md",
-    "RELEASE_0.21.3.md",
     "requirements-speech.txt",
-    "RELEASE_0.21.4.md"
+    "RELEASE_0.21.8.md",
+    "TOOLS.md",
+    "INSTALL.cmd",
+    "install.ps1",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -65,6 +64,14 @@
     "verify:upgrade": "node tools/verify-upgrade.mjs",
     "verify:integration": "node tools/verify-upgrade.mjs --integration",
     "verify:qq": "node tools/verify-qq.mjs",
-    "verify:memory": "node tools/verify-memory-search.mjs"
+    "verify:memory": "node tools/verify-memory-search.mjs",
+    "verify:optimization": "node tools/verify-optimization.mjs",
+    "verify:scroll": "node tools/verify-chat-scroll.mjs",
+    "verify:media": "node tools/verify-media-speed.mjs",
+    "verify:release": "node tools/verify-release.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yeduwuren20000-del/dsh-qq-whale.git"
   }
 }

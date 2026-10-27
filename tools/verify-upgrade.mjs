@@ -15,6 +15,7 @@ const memory = await import('../lib/memory.js')
 const clock = await import('../lib/clock.js')
 const mood = await import('../lib/mood.js')
 const store = await import('../lib/store.js')
+const tokens = await import('../lib/tokens.js')
 const social = await import('../lib/social.js')
 const perception = await import('../lib/perception.js')
 const bridgeLib = await import('../lib/qq.js')
@@ -33,13 +34,6 @@ await test('Clock questions read the clock without intercepting plans or class t
   assert.match(timeReply('[用户语音转文字：现在几点了？]', Date.parse('2026-10-25T16:30:00Z')), /00:30:00/)
   assert.equal(timeReply('今天几点上课？'), null)
   assert.equal(timeReply('提醒我明天三点开会'), null)
-})
-await test('Class schedules and streaks use Beijing days and handle future-only logs', async () => {
-  const schedule = await import('../lib/schedule.js')
-  schedule.addCourse({ name: '周一测试课', day: 1, period: '08:00' })
-  assert.ok(schedule.todayCourses(new Date('2026-10-25T16:30:00Z')).some((r) => r.name === '周一测试课'))
-  store.recordTrail({ at: Date.now() + 86400000, text: 'future fixture' })
-  assert.equal(store.getProfile().streak, 0)
 })
 await test('Unrelated queries do not retrieve or reinforce memories', () => {
   memory.add({ text: '用户喜欢喝红茶', tags: ['饮食'], weight: 4, diary: false })
@@ -80,7 +74,7 @@ await test('The user talking about being insulted is not scolding the fish', () 
   assert.equal(mood.refresh({ ...mood.defaultMood(t), mood: 'annoyed' }, t + 3600000).mood, 'calm')
 })
 await test('Media processing refuses remote endpoints', () => {
-  assert.throws(() => perception.localEndpoint('http://10.2.0.16:11434'))
+  assert.throws(() => perception.localEndpoint('http://10.0.0.1:11434'))
   assert.throws(() => perception.localEndpoint('http://example.com'))
   assert.throws(() => perception.localEndpoint('http://127.0.0.1.example.com'))
   assert.equal(perception.localEndpoint('http://127.0.0.1:11434'), 'http://127.0.0.1:11434')
@@ -108,21 +102,48 @@ await test('Comment replies clamp the daily cap and reject empty input before to
 })
 
 store.setSettings({ qq: { enabled: false }, autonomy: { enabled: false } })
-const listeners = new Set(), disposers = [], sections = [], variables = new Map(), tools = new Map()
-let route, modelCalls = 0
+const listeners = new Set(), errorListeners = new Set(), createdOptions = [], disposers = [], sections = [], variables = new Map(), tools = new Map()
+let route, modelCalls = 0, behavior = 'normal'
+const nativeHandover = { name: 'handover', output: { schema: {}, render() {} } }
+const globalTools = new Map([['handover', nativeHandover]])
 const toolContext = {
-  tools: { register(def) { assert.ok(def.output && typeof def.output.render === 'function', `Tool ${def.name} must declare an output schema and renderer`); tools.set(def.name, def); return () => {} } },
+  tools: { schemas() { return [...tools.values()].map(({name,description,parameters}) => ({name,description,parameters})) }, restrict() { return () => {} }, register(def) { assert.ok(def.output && typeof def.output.render === 'function', `Tool ${def.name} must declare an output schema and renderer`); tools.set(def.name, def); return () => {} } },
   get(name) { if (name === 'tools') return toolContext.tools; if (name === 'systemPrompt') return { section: (s) => sections.push(s), variable: (name, fn) => variables.set(name, fn) } },
 }
 const ctx = {
-  tools: toolContext.tools,
+  tools: { register(def) { assert.ok(!globalTools.has(def.name), `Duplicate global tool: ${def.name}`); globalTools.set(def.name, def); return () => globalTools.delete(def.name) } },
   get(name) { if (name === 'agents') return ctx.agents },
-  on(event, listener) { if (event === 'agent/assistant-stream') listeners.add(listener); return () => listeners.delete(listener) },
+  on(event, listener) { const set = event === 'agent/error' ? errorListeners : listeners; set.add(listener); return () => set.delete(listener) },
   inject(_deps, fn) { fn({ webServer: { register(entry) { route = entry; return () => {} } }, effect: (fn) => fn() }) },
   effect(fn) { const d = fn(); if (typeof d === 'function') disposers.push(d) },
   agents: { async create(options) {
-    options.setup?.(toolContext)
-    const agent = { followup() { modelCalls++; for (const listener of listeners) listener({ agent, frame: { type: 'chunk', chunk: { type: 'text-delta', text: '本鲸在。' } } }) }, async whenIdle() {}, cancel() {} }
+    createdOptions.push(options)
+    const agent = { messages: [{ role: 'assistant', content: '上一轮旧回答，不能当作当前回复' }], followup() {
+      modelCalls++
+      if (behavior === 'model-error') {
+        for (const listener of listeners) listener({ agent, frame: { type: 'chunk', chunk: { type: 'finish', reason: { kind: 'error', failure: { message: '410: ModelDeprecated fixture-model' } } } } })
+        return
+      }
+      if (behavior === 'retried') {
+        for (const listener of listeners) {
+          listener({ agent, frame: { type: 'start' } })
+          listener({ agent, frame: { type: 'chunk', chunk: { type: 'text-delta', text: '失败尝试的残片' } } })
+          listener({ agent, frame: { type: 'chunk', chunk: { type: 'finish', reason: { kind: 'error', failure: { message: '429: fixture capacity retry' } } } } })
+          listener({ agent, frame: { type: 'chunk', chunk: { type: 'usage', usage: { inputTokens: 100, outputTokens: 3, cacheReadTokens: 20 } } } })
+          listener({ agent, frame: { type: 'end' } })
+          listener({ agent, frame: { type: 'start' } })
+          listener({ agent, frame: { type: 'chunk', chunk: { type: 'text-delta', text: '重试后的有效回复' } } })
+          listener({ agent, frame: { type: 'chunk', chunk: { type: 'usage', usage: { inputTokens: 200, outputTokens: 7 } } } })
+          listener({ agent, frame: { type: 'chunk', chunk: { type: 'finish', reason: { kind: 'stop' } } } })
+        }
+        return
+      }
+      if (behavior === 'agent-error') { for (const listener of errorListeners) listener({ agent, error: new Error('fixture provider is unavailable') }); return }
+      if (behavior === 'empty') return
+      const reply = () => { for (const listener of listeners) listener({ agent, frame: { type: 'chunk', chunk: { type: 'text-delta', text: '本鲸在。' } } }) }
+      return behavior === 'async-followup' ? Promise.resolve().then(reply) : reply()
+    }, async whenIdle() {}, cancel() {} }
+    options.setup?.(toolContext, agent)
     return { agent, async dispose() {} }
   } },
 }
@@ -146,7 +167,9 @@ try {
     assert.equal(JSON.parse(response.body).timeZone, 'Asia/Shanghai')
   })
   await test('Every tool satisfies the real DSH registration contract and QQ initializes completely', async () => {
-    assert.ok(tools.has('sticker'))
+    assert.ok(globalTools.has('mentor'))
+    assert.equal(globalTools.get('handover'), nativeHandover)
+    assert.ok(!globalTools.has('memory')); assert.ok(!globalTools.has('sticker'))
     const response = await call('GET', 'qq')
     assert.equal(response.statusCode, 200)
     assert.equal(JSON.parse(response.body).ok, true)
@@ -160,8 +183,58 @@ try {
     assert.ok(sections.some((r) => r.name === 'mentor:clock'))
     assert.match(variables.get('mentor_clock')(), /北京时间/)
     assert.ok(tools.has('companion')); assert.ok(tools.has('mediaEdit'))
+    assert.ok(tools.has('handover')); assert.ok(tools.has('memory')); assert.ok(tools.has('sticker'))
+    assert.equal(globalTools.get('handover'), nativeHandover)
     assert.ok(tools.get('browser').parameters.properties.action.enum.includes('download'))
     assert.ok(tools.get('browser').parameters.properties.action.enum.includes('inspect'))
+  })
+  await test('A retired model reports an SSE error instead of returning an old reply or fabricated greeting', async () => {
+    const session = store.createSession({ title: 'failure fixture', mode: 'chat' })
+    behavior = 'model-error'
+    const response = await call('POST', 'turn', { sessionId: session.id, text: 'fixture question', mode: 'chat' })
+    assert.match(response.body, /event: error/); assert.match(response.body, /ModelDeprecated/)
+    assert.doesNotMatch(response.body, /event: done|上一轮旧回答|嗯，我在/)
+    assert.ok(!store.getSession(session.id).messages.some((m) => m.role === 'mentor'))
+    behavior = 'normal'
+    const recovered = await call('POST', 'turn', { sessionId: session.id, text: 'fixture retry', mode: 'chat' })
+    assert.match(recovered.body, /event: done/); assert.match(recovered.body, /本鲸在/)
+  })
+  await test('An automatic retry that succeeds clears the temporary capacity error', async () => {
+    const session = store.createSession({ title: 'retry fixture', mode: 'chat' })
+    const beforeUsage = tokens.statsFor().todayStat
+    behavior = 'retried'
+    const response = await call('POST', 'turn', { sessionId: session.id, text: 'fixture retry', mode: 'chat' })
+    assert.match(response.body, /event: done/); assert.match(response.body, /重试后的有效回复/)
+    assert.doesNotMatch(response.body, /event: error/)
+    assert.equal(store.getSession(session.id).messages.at(-1).text, '重试后的有效回复')
+    const afterUsage = tokens.statsFor().todayStat
+    assert.equal(afterUsage.prompt - beforeUsage.prompt, 320)
+    assert.equal(afterUsage.completion - beforeUsage.completion, 10)
+    assert.equal(afterUsage.source, 'mixed')
+    behavior = 'normal'
+  })
+  await test('Host agent errors and empty output cannot silently succeed', async () => {
+    const session = store.createSession({ title: 'empty fixture', mode: 'chat' })
+    for (const kind of ['agent-error', 'empty']) {
+      behavior = kind
+      const response = await call('POST', 'turn', { sessionId: session.id, text: 'fixture question', mode: 'chat' })
+      assert.match(response.body, /event: error/); assert.doesNotMatch(response.body, /event: done|上一轮旧回答/)
+    }
+    behavior = 'normal'
+  })
+  await test('Changing the companion model recreates its driver and accepts asynchronous followup', async () => {
+    const session = store.createSession({ title: 'model fixture', mode: 'chat' })
+    store.setSettings({ chatModel: { provider: 'fixture-provider', model: 'model-one' } })
+    await call('POST', 'turn', { sessionId: session.id, text: 'fixture one', mode: 'chat' })
+    assert.equal(createdOptions.at(-1).agentOptions.model, 'model-one')
+    const before = createdOptions.length
+    store.setSettings({ chatModel: { provider: 'fixture-provider', model: 'model-two' } })
+    behavior = 'async-followup'
+    const response = await call('POST', 'turn', { sessionId: session.id, text: 'fixture two', mode: 'chat' })
+    assert.equal(createdOptions.length, before + 1)
+    assert.equal(createdOptions.at(-1).agentOptions.model, 'model-two')
+    assert.match(response.body, /event: done/); assert.match(response.body, /本鲸在/)
+    behavior = 'normal'
   })
   await test('Public posting remains gated until exact approval or enabled automation', async () => {
     const result = await tools.get('companion').execute({ action: 'qzonePublish', id: 'not-published' })
@@ -247,4 +320,5 @@ if (process.argv.includes('--integration')) {
     const subtitled = await media.editMedia({ action: 'subtitles', file: input, subtitles: sub }); assert.ok(subtitled.bytes > 0)
   })
 }
+console.log('COMPANION TOOL SCHEMAS', JSON.stringify({count: tools.size, bytes: Buffer.byteLength(JSON.stringify(toolContext.tools.schemas()))}))
 console.log(`VERIFIED ${count} behavior checks; isolated data: ${scratch}`)

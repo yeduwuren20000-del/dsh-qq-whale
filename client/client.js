@@ -6,12 +6,12 @@ window.__ModuleLoader__.load({
 
     const React = require('react')
     const h = React.createElement
-    const { useState, useEffect, useRef, useCallback } = React
+    const { useState, useEffect, useLayoutEffect, useRef, useCallback } = React
 
     const API = '/dsh-mentor/api'
     const PANEL_ID = 'dsh-mentor'
     const TITLE = '大肥鱼'
-    const CLIENT_VERSION = 28
+    const CLIENT_VERSION = 29
 
     /** 本窗口不渲染表情包；宿主全局提示词里那套 [表情: …] 标记到这里会变成噪音，直接剥掉。 */
     const cleanText = (value) => String(value ?? '').replace(/\[表情[:：][^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').trim()
@@ -216,6 +216,7 @@ window.__ModuleLoader__.load({
 .dm-scroll{flex:1;overflow-y:auto;padding:16px 18px 6px;display:flex;flex-direction:column;gap:13px;
   scrollbar-width:thin;background:var(--dm-chatbg)}
 .dm-scroll::-webkit-scrollbar{width:7px}
+.dm-scroll-content{display:flex;flex-direction:column;gap:13px;flex:1 0 auto;min-height:0;overflow-anchor:none}
 .dm-scroll::-webkit-scrollbar-thumb{background:rgba(17,24,39,.12);border-radius:4px}
 .dm-scroll::-webkit-scrollbar-thumb:hover{background:rgba(17,24,39,.2)}
 
@@ -849,12 +850,12 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       }, [])
       const [notice, setNotice] = useState('')
       const [activity, setActivity] = useState(null)
-      const scrollRef = useRef(null)
+      const [scrollRequest, setScrollRequest] = useState(0)
+      const sessionRequestRef = useRef(0)
       const abortRef = useRef(null)
       const activeRef = useRef('')
       const busyRef = useRef(false)
       const shownCountRef = useRef(0)
-      const scrollSessionRef = useRef('')
       activeRef.current = activeId
       busyRef.current = busy
       shownCountRef.current = messages.length
@@ -870,12 +871,16 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         }
       }, [])
 
-      const openSession = useCallback(async (id) => {
+      const openSession = useCallback(async (id, { followLatest = true } = {}) => {
         if (!id) return
+        const request = ++sessionRequestRef.current
+        activeRef.current = id
         setActiveId(id)
         try {
           const body = await apiJson(`${API}/sessions/${encodeURIComponent(id)}`)
+          if (request !== sessionRequestRef.current || activeRef.current !== id) return
           setMessages((body.session?.messages || []).map((row) => ({ ...row, streaming: false })))
+          if (followLatest) setScrollRequest((n) => n + 1)
           markSeen(id, (body.session?.messages || []).length)
         } catch (error) {
           setNotice(`打开会话失败：${error.message}`)
@@ -896,7 +901,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         if (!id || !rows.length) return
         const mine = rows.find((row) => row.id === id)
         if (!mine || mine.count === shownCountRef.current) return
-        await openSession(id)
+        await openSession(id, { followLatest: false })
       }, [loadSessions, openSession])
 
       const removeMessage = useCallback(async (messageId) => {
@@ -1334,21 +1339,6 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         return () => clearInterval(timer)
       }, [refreshSessions])
 
-      useEffect(() => {
-        const el = scrollRef.current
-        if (!el) return
-        // 换会话一定要落到底部；同一会话里增量更新时，只有本来就在底部附近才跟着滚，
-        // 否则用户翻历史会被 QQ 那边异步进来的消息拽走。
-        const switched = scrollSessionRef.current !== activeId
-        scrollSessionRef.current = activeId
-        const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-        if (switched || nearBottom) {
-          el.scrollTop = el.scrollHeight
-          // 图片、字体、代码块展开会撑高内容，下一帧再贴一次底，打开就是最新一条。
-          requestAnimationFrame(() => { if (scrollRef.current === el) el.scrollTop = el.scrollHeight })
-        }
-      }, [messages, activeId])
-
       const refreshProfile = useCallback(async () => {
         try {
           const body = await apiJson(`${API}/profile`)
@@ -1448,7 +1438,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       return {
         sessions, activeId, messages, draft, busy, health, profile, persona, presets, mood, seen,
         memory, memoryStats, journal, diary, diaryStats, notice, activity, setup,
-        scrollRef, busyRef, activeRef,
+        scrollRequest, busyRef, activeRef,
         setDraft, setProfile, setNotice,
         loadSessions, openSession, createSession, removeSession, renameSession, refreshProfile, send, stop,
         loadPersona, savePersona, loadSetup, saveSetup, removeMessage, markSeen, loadMemory, remember, forget, dedupeMemories, loadJournal,
@@ -2439,148 +2429,6 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       )
     }
 
-    /* ---------------------------------------------------------------- 课表 */
-
-    const WEEK_OPTS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
-    const DAY_ORDER = { 周一: 1, 周二: 2, 周三: 3, 周四: 4, 周五: 5, 周六: 6, 周日: 7 }
-
-    function ScheduleDrawer(props) {
-      const { onClose } = props
-      const [courses, setCourses] = useState([])
-      const [remote, setRemote] = useState({ sshHost: '', studentId: '', enabled: false })
-      const [form, setForm] = useState({ day: '周一', name: '', period: '', location: '', teacher: '' })
-      const [busy, setBusy] = useState(false)
-      const [notice, setNotice] = useState('')
-      const [termWeek, setTermWeek] = useState(null)
-
-      const reload = useCallback(async () => {
-        try {
-          const body = await apiJson(`${API}/schedule`)
-          setCourses(body.courses || [])
-          if (body.remote) setRemote(body.remote)
-          setTermWeek(body.termWeek || null)
-        } catch {
-          setNotice('课表没加载出来（宿主可能还没起来）。')
-        }
-      }, [])
-
-      useEffect(() => { reload() }, [reload])
-
-      const setField = (key) => (event) => setForm((row) => ({ ...row, [key]: event.target.value }))
-
-      // 从配置的服务器同步（服务器上是学校教务的缓存库，按学号查）。
-      const syncRemote = async () => {
-        setBusy(true)
-        setNotice('')
-        try {
-          const r = await apiJson(`${API}/schedule`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'sync-remote', remote: { studentId: remote.studentId, sshHost: remote.sshHost } }),
-          })
-          if (!r.ok) {
-            setNotice(r.error || '同步失败')
-            return
-          }
-          setNotice(`已从 ${remote.sshHost} 同步：${r.synced} 门课（本地改动已备份为 courses.local.json）。`)
-          await reload()
-        } catch (error) {
-          setNotice(`同步失败：${error.message}`)
-        } finally {
-          setBusy(false)
-        }
-      }
-
-      const add = async () => {
-        if (!form.name.trim()) { setNotice('课程名不能为空。'); return }
-        setBusy(true)
-        setNotice('')
-        try {
-          await apiJson(`${API}/schedule`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'add', ...form }),
-          })
-          setForm((row) => ({ ...row, name: '', period: '', location: '', teacher: '' }))
-          await reload()
-        } catch (error) {
-          setNotice(`加课失败：${error.message}`)
-        } finally {
-          setBusy(false)
-        }
-      }
-
-      const remove = async (id) => {
-        try {
-          await apiJson(`${API}/schedule`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'remove', id }),
-          })
-          await reload()
-        } catch (error) {
-          setNotice(`删除失败：${error.message}`)
-        }
-      }
-
-      const grouped = WEEK_OPTS.map((label) => ({
-        label,
-        items: courses.filter((c) => DAY_ORDER[label] === c.day).sort((a, b) => String(a.period).localeCompare(String(b.period))),
-      })).filter((g) => g.items.length)
-
-      return h(
-        Drawer,
-        { title: '课表', onClose },
-        h('div', { className: 'dm-sec' }, '远程课表（自有服务器）'),
-        h('div', { className: 'dm-sched-form' },
-          h('input', {
-            className: 'dm-input-sm',
-            style: { width: '110px' },
-            value: remote.sshHost || '',
-            onChange: (e) => setRemote((r) => ({ ...r, sshHost: e.target.value })),
-            placeholder: 'ssh 别名',
-            title: '~/.ssh/config 里的 Host 别名，填写你自己的别名',
-          }),
-          h('input', {
-            className: 'dm-input-sm',
-            style: { width: '140px' },
-            value: remote.studentId || '',
-            onChange: (e) => setRemote((r) => ({ ...r, studentId: e.target.value })),
-            placeholder: '学号',
-          }),
-          h('button', { className: 'dm-btn dm-primary', disabled: busy || !remote.studentId, onClick: syncRemote, title: '从服务器拉课表覆盖本地（会先备份）' }, busy ? '同步中…' : '从服务器同步'),
-        ),
-        h('div', { className: 'dm-muted', style: { fontSize: '12px', margin: '2px 0 4px' } },
-          `启动时也会自动同步一次。同步是覆盖式：服务器为准，本地课表先备份成 courses.local.json。${termWeek ? `现在是第 ${termWeek} 周，课表按教学周过滤。` : ''}`),
-        h('div', { className: 'dm-sec' }, '加一门课'),
-        h('div', { className: 'dm-sched-form' },
-          h('select', { className: 'dm-input-sm', value: form.day, onChange: setField('day') },
-            WEEK_OPTS.map((d) => h('option', { key: d, value: d }, d))),
-          h('input', { className: 'dm-input-sm', value: form.name, onChange: setField('name'), placeholder: '课程名（必填）' }),
-          h('input', { className: 'dm-input-sm', value: form.period, onChange: setField('period'), placeholder: '节次/时间，如 第1节' }),
-          h('input', { className: 'dm-input-sm', value: form.location, onChange: setField('location'), placeholder: '地点' }),
-          h('input', { className: 'dm-input-sm', value: form.teacher, onChange: setField('teacher'), placeholder: '老师' }),
-          h('button', { className: 'dm-btn dm-primary', disabled: busy, onClick: add }, '加入课表'),
-        ),
-        notice ? h('div', { className: 'dm-muted', style: { margin: '6px 0' } }, notice) : null,
-        grouped.length
-          ? grouped.map((g) =>
-              h('div', { key: g.label, style: { marginTop: '10px' } },
-                h('div', { className: 'dm-sec' }, `${g.label} · ${g.items.length} 节`),
-                g.items.map((c) =>
-                  h('div', { className: 'dm-sched-row', key: c.id },
-                    h('div', { className: 'dm-sched-info' },
-                      h('b', null, `${c.period} ${c.name}`),
-                      h('span', { className: 'dm-sched-meta' }, `${c.teacher ? c.teacher + ' · ' : ''}${c.location || '无地点'}`)),
-                    h('button', { className: 'dm-btn dm-btn-xs', onClick: () => remove(c.id) }, '删'),
-                  ),
-                ),
-              ),
-            )
-          : h('div', { className: 'dm-muted', style: { marginTop: '10px' } }, '课表还是空的。上面的表单加一门，或直接把课程发到大肥鱼、让她帮你加。'),
-      )
-    }
-
     /* ---------------------------------------------------------------- 平台登录（Cookie 导入） */
 
     function LoginPanel(props) {
@@ -3108,7 +2956,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
             { className: 'dm-stat', key: mode },
             h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
               h('span', { className: 'dm-dot', style: { color: (MODE_META[mode] || MODE_META.chat).color, background: (MODE_META[mode] || MODE_META.chat).color } }),
-              (MODE_META[mode] || MODE_META.chat).label),
+              ({ diary: '写日记', growth: '性格整理', reflection: '后台整理' }[mode] || (MODE_META[mode] || MODE_META.chat).label)),
             h('b', null, String(count)),
           ),
         ),
@@ -3146,12 +2994,16 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         { title: () => '今天吃了几碗白饭（大肥鱼自己）', onClose },
         h('div', { style: { display: 'flex', gap: '7px', marginBottom: '10px' } },
           h('div', { className: 'dm-stat', style: { flex: 1, flexDirection: 'column', alignItems: 'flex-start', border: '1px solid var(--dm-line)', borderRadius: '8px', padding: '8px 10px' } },
-            h('span', { className: 'dm-muted' }, '今天'), h('b', { style: { fontSize: '18px' } }, fmtBowls(todayTotal)), h('span', { className: 'dm-muted' }, '（提示 ' + (today.prompt || 0) + ' + 生成 ' + (today.completion || 0) + '，本地估算）')),
+            h('span', { className: 'dm-muted' }, '今天'), h('b', { style: { fontSize: '18px' } }, fmtBowls(todayTotal)), h('span', { className: 'dm-muted' }, '（提示 ' + (today.prompt || 0) + ' + 生成 ' + (today.completion || 0) + '，' + (stats?.source === 'host' ? '宿主回传' : stats?.source === 'mixed' ? '含历史估算' : '本地估算') + '）')),
           h('div', { className: 'dm-stat', style: { flex: 1, flexDirection: 'column', alignItems: 'flex-start', border: '1px solid var(--dm-line)', borderRadius: '8px', padding: '8px 10px' } },
             h('span', { className: 'dm-muted' }, '今天轮数'), h('b', { style: { fontSize: '18px' } }, `${today.turns || 0}`)),
         ),
         h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.6, marginBottom: '8px' } },
-          '白饭就是 token——大肥鱼每聊一句、想一件事、干一次活都要吃几口。这里只算它自己（大肥鱼）吃的，不算主对话。数字是本地估算（约 CJK 1 字≈0.6 碗），不是供应商账单精确值，1 碗≈1000 token。'),
+          '白饭就是 token——大肥鱼每聊一句、想一件事、干一次活都要吃几口。这里只算它自己（大肥鱼）吃的，不算主对话。优先记录宿主回传的输入、输出及重试用量；缺少回传时估算。历史估算会单独保留，不能当成金额账单。1 碗≈1000 token。'),
+        today.bySource && Object.keys(today.bySource).length > 1
+          ? h('div', { className: 'dm-muted', style: { lineHeight: 1.6, marginBottom: '8px' } }, Object.entries(today.bySource).map(([source, value]) => h('div', { key: source }, `${source === 'host' ? '宿主回传' : source === 'estimate' ? '本地估算' : '历史混合'}：${(value.prompt || 0) + (value.completion || 0)} token`)))
+          : null,
+        today.cacheRead ? h('div', { className: 'dm-muted', style: { marginBottom: '8px' } }, `其中缓存命中输入 ${today.cacheRead} token，已包含在提示用量中。`) : null,
         empty
           ? h('div', { className: 'dm-empty-block' }, '还没有对话记录，聊几句再来。')
           : h(
@@ -3178,7 +3030,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
                   { className: 'dm-stat', key: mode },
                   h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: '6px' } },
                     h('span', { className: 'dm-dot', style: { color: (MODE_META[mode] || MODE_META.chat).color, background: (MODE_META[mode] || MODE_META.chat).color } }),
-                    (MODE_META[mode] || MODE_META.chat).label),
+                    ({ diary: '写日记', growth: '性格整理', reflection: '后台整理' }[mode] || (MODE_META[mode] || MODE_META.chat).label)),
                   h('b', null, fmtTokens((m.prompt || 0) + (m.completion || 0))),
                 ),
               ),
@@ -3316,7 +3168,6 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         { id: 'chat', icon: 'chats', title: '会话', fixed: true },
         { id: 'memory', icon: 'diary', title: '记忆 / 日记' },
         { id: 'persona', icon: 'user', title: '性格（六维人格）' },
-        { id: 'schedule', icon: 'book', title: '课表' },
         { id: 'login', icon: 'shield', title: '平台登录（B站/抖音/小红书 Cookie）' },
         { id: 'components', icon: 'sliders', title: '工具准备：选择并一键安装' },
         { id: 'qq', icon: 'plug', title: qqOn ? 'QQ 已连接' : 'QQ 未连接', dot: qqOn },
@@ -3375,6 +3226,36 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       )
     }
 
+
+    // Own the scroll lifecycle with the DOM: opening an overlay can mount it without changing messages.
+    function MessageViewport({ sessionId, jump, children }) {
+      const viewport = useRef(null), content = useRef(null), following = useRef(true), visible = useRef(false)
+      const stick = () => {
+        const el = viewport.current
+        if (el?.clientHeight && following.current) el.scrollTop = el.scrollHeight
+      }
+      useLayoutEffect(() => { following.current = true; stick() }, [sessionId, jump])
+      useLayoutEffect(stick)
+      useEffect(() => {
+        const el = viewport.current
+        const resize = () => {
+          const shown = el.clientHeight > 0
+          if (shown && !visible.current) following.current = true
+          visible.current = shown
+          stick()
+        }
+        const show = () => { if (!document.hidden) { following.current = true; resize() } }
+        const observer = new ResizeObserver(resize)
+        observer.observe(el); observer.observe(content.current)
+        document.addEventListener('visibilitychange', show)
+        resize()
+        return () => { observer.disconnect(); document.removeEventListener('visibilitychange', show) }
+      }, [])
+      return h('div', { className: 'dm-scroll', ref: viewport, onScroll: () => {
+        const el = viewport.current
+        if (el.clientHeight) following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+      } }, h('div', { className: 'dm-scroll-content', ref: content }, children))
+    }
 
     function Stage(props) {
       const { state, variant } = props
@@ -3588,8 +3469,8 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
               ),
             ),
             h(
-              'div',
-              { className: 'dm-scroll', ref: state.scrollRef },
+              MessageViewport,
+              { sessionId: state.activeId, jump: state.scrollRequest },
               hasMessages
                 ? state.messages.map((row, index) => {
                     const prev = state.messages[index - 1]
@@ -3726,7 +3607,6 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
             )
           : null,
         panel === 'persona' ? h(PersonaDrawer, { persona: state.persona, presets: state.presets, onSave: state.savePersona, onClose: close, setup: state.setup, onSetup: state.saveSetup }) : null,
-        panel === 'schedule' ? h(ScheduleDrawer, { onClose: close }) : null,
         panel === 'login' ? h(LoginPanel, { onClose: close }) : null,
         panel === 'memory' ? h(MemoryDrawer, { state, onClose: close, startTab: memTab, onPick: () => fileRef.current?.click() }) : null,
         panel === 'components' ? h(ComponentsPanel, { onClose: close }) : null,
@@ -3787,7 +3667,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
               { className: 'dm-setup-ul' },
               h('li', null, '闲聊陪聊：像熟人一样自然回话，不塞知识点、不布置作业'),
               h('li', null, '记忆 & 日记：记住你说过的事，也会自己写日记复盘'),
-              h('li', null, '课表 / 天气 / 文件：本地数据随问随答，文档能收能发'),
+              h('li', null, '天气 / 文件：本地数据随问随答，文档能收能发'),
               h('li', null, 'QQ 说说：它按心情时不时自己发一条碎碎念'),
               h('li', null, '平台接管 & 扫码登录：抖音 / B站 / 小红书内容能抓、能扫码进'),
             ),
@@ -3921,7 +3801,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
     exports.inject = ['slots']
     exports.apply = apply
     // 设计预览用：tools/preview.mjs 拿它把窗口渲染成静态页再截图，不用开 GUI。
-    exports.__design = { Stage, Bubble, MentorPage, MODE_META, CSS, Drawer, PersonaDrawer, MemoryDrawer, QQPanel, ComponentsPanel, ScheduleDrawer, LoginPanel, Footprint, FileStrip, FilesTab, PERSONA_SCHEMA, DIM_IDS }
+    exports.__design = { Stage, Bubble, MentorPage, MessageViewport, TokenDrawer, MODE_META, CSS, Drawer, PersonaDrawer, MemoryDrawer, QQPanel, ComponentsPanel, LoginPanel, Footprint, FileStrip, FilesTab, PERSONA_SCHEMA, DIM_IDS }
     return module.exports
   },
 })

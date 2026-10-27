@@ -1,6 +1,5 @@
 node_modules/
-runtime/*
-!runtime/SOURCES.md
+runtime/
 component-downloads/
 verification-data/
 .verification-data/
