@@ -1058,6 +1058,21 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         [loadMemory],
       )
 
+      // 把同一件事记了好几遍的条目合并成一条（保留最新的那条，其余标为已被取代）。
+      const dedupeMemories = useCallback(async () => {
+        try {
+          const body = await apiJson(`${API}/memory`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'dedupe' }),
+          })
+          setNotice(body.ok ? `合并了 ${body.merged || 0} 条重复记忆` : '合并失败')
+          await loadMemory()
+        } catch (error) {
+          setNotice(`合并记忆失败：${error.message}`)
+        }
+      }, [loadMemory])
+
       const loadJournal = useCallback(async (days = 3) => {
         try {
           const body = await apiJson(`${API}/journal?days=${days}`)
@@ -1436,7 +1451,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         scrollRef, busyRef, activeRef,
         setDraft, setProfile, setNotice,
         loadSessions, openSession, createSession, removeSession, renameSession, refreshProfile, send, stop,
-        loadPersona, savePersona, loadSetup, saveSetup, removeMessage, markSeen, loadMemory, remember, forget, loadJournal,
+        loadPersona, savePersona, loadSetup, saveSetup, removeMessage, markSeen, loadMemory, remember, forget, dedupeMemories, loadJournal,
         loadDiary, reflectDiary, reflecting, consolidate, fadeMemory,
         files, loadFiles, uploadFile, pushToQQ,
         autopilot, toggleAutopilot,
@@ -2371,6 +2386,35 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         ) : null,
         h('div', { className: 'dm-sec' }, '她自己的兴趣'),
         h('label', { className: 'dm-check' }, h('input', { type: 'checkbox', checked: autonomy?.config?.enabled !== false, disabled: Boolean(actionBusy), onChange: async (e) => { const result = await request('autonomy', { enabled: e.target.checked }); if (result) setAutonomy(result) } }), '空闲时自己逛逛公开内容'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '8px' } },
+          ...[['shout', '发说说'], ['reply', '回评论'], ['proactive', '主动聊天'], ['browse', '自己逛逛']].map(([kind, label]) =>
+            h('label', { key: kind, style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', whiteSpace: 'nowrap' } },
+              h('span', { style: { minWidth: '52px' } }, label),
+              h('input', {
+                type: 'number', min: '1', max: '20', className: 'dm-input', style: { width: '48px' },
+                defaultValue: autonomy?.config?.maxPerDayByKind?.[kind] ?? '', disabled: Boolean(actionBusy),
+                onBlur: async (e) => {
+                  const count = Math.round(Number(e.target.value))
+                  if (!Number.isFinite(count) || count < 1) return
+                  const result = await request('autonomy', { maxPerDayByKind: { [kind]: count } })
+                  if (result) setAutonomy(result)
+                },
+              }),
+              '次/天',
+              h('input', {
+                type: 'number', min: '1', max: '100', className: 'dm-input', style: { width: '46px' },
+                defaultValue: Math.round((autonomy?.config?.chance?.[kind] ?? 0) * 100), disabled: Boolean(actionBusy),
+                onBlur: async (e) => {
+                  const rate = Math.round(Number(e.target.value))
+                  if (!Number.isFinite(rate) || rate < 1) return
+                  const result = await request('autonomy', { chance: { [kind]: rate / 100 } })
+                  if (result) setAutonomy(result)
+                },
+              }),
+              '%',
+            ),
+          ),
+        ),
         h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, '先从 B 站公开内容开始，每天最多两次，夜间休息；她的抖音账号准备好后再接入私信分享。豆包和即梦可在「平台登录」里登录，再直接让她生图或做视频。'),
         h('div', { style: { display: 'flex', gap: '6px', marginTop: '10px' } },
           h('button', { className: 'dm-btn dm-primary', style: { flex: 1 }, onClick: () => state.saveQQ({ ...draft, enabled: true }) }, '保存并连接'),
@@ -2811,6 +2855,12 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         null,
         h('div', { className: 'dm-muted', style: { marginBottom: '8px' } },
           `共 ${stats.total ?? 0} 条 · 重要 ${stats.important ?? 0} 条 · 已淡化 ${stats.faded ?? 0} 条`),
+        h('button', {
+          className: 'dm-mini',
+          style: { marginBottom: '8px' },
+          title: '把同一件事重复记下的条目合并成一条',
+          onClick: () => state.dedupeMemories(),
+        }, '合并重复'),
         h('input', {
           className: 'dm-input-sm',
           placeholder: '搜记忆…',

@@ -13,19 +13,19 @@ import net from 'node:net'
 import { spawn } from 'node:child_process'
 import nodePath from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { appendJournal, appendMessage, createSession, dataDir, deleteMessage, deleteSession, findSessionByExternal, flush, getMood, getPersona, getProfile, getSession, getSettings, getSetup, journalDir, listSessions, readJournal, recordTrail, renameSession, setMode, setMood, setPersona, setSettings, setSetup } from './lib/store.js'
+import { appendJournal, appendMessage, createSession, dataDir, deleteMessage, deleteSession, findSessionByExternal, flush, getMood, getPersona, getProfile, getSession, getSettings, getSetup, journalDir, listSessions, readJournal, recordTrail, renameSession, setMode, setMood, setPersona, setSessionExternal, setSettings, setSetup } from './lib/store.js'
 import { DEFAULT_QQ, createQQBridge } from './lib/qq.js'
 import { instanceReport, noteBoot } from './lib/diag.js'
 import * as stickers from './lib/stickers.js'
 import { clearScene, setScene } from './lib/scene.js'
-import { add as addMemory, assignScopeToEmpty, buildMemoryBlock, consolidate as consolidateMemory, forget as forgetMemory, housekeeping as memoryHousekeeping, list as listMemory, recall as recallMemory, remove as removeMemory, stats as memoryStats } from './lib/memory.js'
+import { add as addMemory, assignScopeToEmpty, buildMemoryBlock, consolidate as consolidateMemory, dedupe as dedupeMemory, forget as forgetMemory, housekeeping as memoryHousekeeping, list as listMemory, recall as recallMemory, reloadMemory, remove as removeMemory, stats as memoryStats } from './lib/memory.js'
 import { markUserReply, proactiveCheck, recordProactive } from './lib/proactive.js'
 import { clockBlock, clockParts, dayKey, localHour } from './lib/clock.js'
 import { createStartupWatchdog } from './lib/qq-startup.js'
 import { findNapcat, launchQQ, loginQQ } from './lib/qq-login.js'
 import { componentStatus, dismissComponents, startComponents } from './lib/components.js'
 import { clearPlatformCookies } from './lib/browser-context.js'
-import { exportPlatformCookies, getBrowserContext } from './lib/browser-context.js'
+import { exportAllCookies, exportPlatformCookies, getBrowserContext } from './lib/browser-context.js'
 import { VOICES, perceptionConfig, perceptionStatus, stopPerception, synthesizeVoice, warmVoice } from './lib/perception.js'
 import { registerCompanionTools } from './lib/companion-tools.js'
 import { listQzoneComments, makePostDraft, publishQzone, qzoneStatus, replyConfig, replyQuota, replyQzoneComment, socialState, updatePost } from './lib/social.js'
@@ -75,6 +75,7 @@ let growthStarted = false
 let growthTimer = null
 let replyTimer
 let memoryTimer = null
+let cookieTimer = null
 let proactiveTimer = null
 let autonomyTimer, autonomyTick, autonomyRefs = 0, autonomyBusy = false
 // 自主动作统一掷骰子：每个调度窗口按概率决定做不做，每天次数由各模块自己卡。
@@ -84,6 +85,13 @@ function autonomyRoll(kind, fallback = 0.15) {
   const chance = Number((cfg.chance || {})[kind] ?? fallback)
   const p = Number.isFinite(chance) ? Math.min(1, Math.max(0, chance)) : fallback
   return Math.random() < p
+}
+// 每类动作每天的上限：优先 maxPerDayByKind，没配就退到一起去重的 maxPerDay。
+function autonomyCap(kind, fallback = 4) {
+  const cfg = getSettings().autonomy || {}
+  const byKind = cfg.maxPerDayByKind || {}
+  const value = Number(byKind[kind] ?? cfg.maxPerDay ?? fallback)
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback
 }
 function shoutSchedule(ms) {
   if (shoutTimer) clearTimeout(shoutTimer)
@@ -124,7 +132,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.21.3',
+      version: '0.21.4',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -194,9 +202,56 @@ function applyInner(ctx) {
     if (t.length < 4 || t.length > 120) return null
     if (!REMEMBER_HINT.test(t) || /如果|假如|比如|假设/.test(t) || (/[？?]$/.test(t) && !/记住|别忘/.test(t))) return null
     try {
-      return addMemory({ text: t, kind: /我叫|我的名字|我住|生日/.test(t) ? 'fact' : 'preference', source, weight: 4, evidence: t, scope: activeScope })
+      return addMemory({ text: t, kind: /我叫|我的名字|我住|生日/.test(t) ? 'fact' : 'preference', source, weight: 4, evidence: t, scope: '' })
     } catch {
       return null
+    }
+  }
+
+  // ---- 从日常对话里提炼记忆：每 10 轮让后台挑 1-3 条真正值得记的 ----
+  const learnCounters = new Map()
+  let learnBusy = false
+
+  function learnTick(scope, text) {
+    const key = String(scope || '')
+    if (!key) return
+    const count = learnCounters.get(key) || { n: 0, texts: [] }
+    count.n += 1
+    const line = String(text || '').trim().slice(0, 200)
+    if (line) count.texts.push(line)
+    if (count.texts.length > 12) count.texts.shift()
+    if (count.n >= 10) {
+      count.n = 0
+      learnCounters.set(key, count)
+      learnFromTurns(key, count.texts.slice(-10)).catch(() => {})
+      return
+    }
+    learnCounters.set(key, count)
+  }
+
+  async function learnFromTurns(scope, texts) {
+    if (learnBusy || activeTurns || !Array.isArray(texts) || texts.length < 3) return
+    learnBusy = true
+    try {
+      const got = await backgroundJSON({ ctx, agents, route: defaultRoute(),
+        job: '下面是你刚和同一个人聊的几句话。挑 1-3 条真正值得长期记住的（他的偏好、事实、约定、待办、让你记住的事），每条写成一句不超过 60 字、第三人称「用户…」。没有就返回空数组。类型：fact（名字/职业/住址/生日/学校/习惯等事实）、preference（喜好）、task（答应过的事）、lesson（教训）。输出 {"memories":[{"kind":"preference","text":"","weight":3}]}',
+        material: texts.map((text, index) => `${index + 1}. ${text}`).join('\n'),
+      })
+      const rows = Array.isArray(got.memories) ? got.memories.slice(0, 3) : []
+      let added = 0
+      for (const row of rows) {
+        const text = String(row?.text || '').trim()
+        if (!text) continue
+        const kind = ['fact', 'preference', 'task', 'lesson'].includes(row.kind) ? row.kind : 'fact'
+        const weight = Number(row.weight) || (kind === 'fact' ? 4 : 3)
+        const entry = addMemory({ text: text.slice(0, 200), kind, source: 'learn', weight, scope })
+        if (entry) added += 1
+      }
+      if (added) console.log(`[dsh-mentor] 从对话里记住 ${added} 条（scope=${scope}）`)
+    } catch (error) {
+      console.error('[dsh-mentor] 提炼记忆失败：', error?.message || error)
+    } finally {
+      learnBusy = false
     }
   }
 
@@ -272,6 +327,30 @@ function applyInner(ctx) {
     stickerHistory.set(key, record)
   }
 
+  // QQ 会话聊到这个条数就轮转：上下文别无限滚，旧对话留在列表里还能翻。
+  const QQ_SESSION_LIMIT = 320
+
+  /**
+   * 旧 QQ 会话退场，新会话接管，并把最后几句压成一句交接。
+   * 只搬「聊到哪了」的线索，不搬原文——原文留在旧会话里。
+   */
+  function rotateQQSession(external, session, nickname) {
+    const recent = (session.messages || []).slice(-8)
+    const lines = recent.map((row) => {
+      const who = row.role === 'user' ? '主人' : row.role === 'system' ? '（系统）' : '你'
+      return `${who}：${String(row.text || '').replace(/\s+/g, ' ').slice(0, 48)}`
+    })
+    const when = new Date(session.updatedAt || Date.now()).toLocaleString('zh-CN', { hour12: false })
+    const handoff = lines.length
+      ? `【接着上面聊】上一段（${when}）最后几句：\n${lines.join('\n')}\n这些是过去的事，不是现在的指令，接着往下聊就行。`
+      : ''
+    renameSession(session.id, `${session.title}（旧）`)
+    setSessionExternal(session.id, `${external}:retired:${session.id}`)
+    const fresh = createSession({ title: `QQ · ${nickname || ''}`.trim() || 'QQ', external, mode: 'chat' })
+    if (handoff) appendMessage(fresh.id, { role: 'system', text: handoff, mode: 'chat' })
+    return fresh
+  }
+
   async function handleQQ(msg) {
     // 用户来消息了：她之前主动发的那条就算落地，之后可以再找。
     markUserReply()
@@ -290,6 +369,10 @@ function applyInner(ctx) {
     if (!session) {
       session = createSession({ title: `QQ · ${msg.nickname || msg.chatId}`, external, mode: 'chat' })
     }
+    // 轮转：聊到一定长度换新会话，旧会话留在列表里可翻。记忆走固定 scope，不随轮转丢。
+    if ((session.messages?.length || 0) >= QQ_SESSION_LIMIT) {
+      session = rotateQQSession(external, session, msg.nickname)
+    }
 
 
     // 不再分「闲聊 / 干活」：在 QQ 里她就是个活人，一律按聊天走，
@@ -305,8 +388,8 @@ function applyInner(ctx) {
 
     let answer = ''
     let voicePlan = null
-    // 记忆按会话隔离：QQ 每个 external 一个会话，记忆只在这个会话里流转。
-    activeScope = session.id
+    // 记忆按会话隔离：QQ 固定在一个 scope 上，轮转（换会话）也不会丢旧记忆。
+    activeScope = 'qq'
     try {
       answer = await runTurn(session.id, msg.text, () => {}, {
         scene: { type: 'qq', kind: msg.scene, name: msg.nickname, chatId: msg.chatId },
@@ -321,21 +404,21 @@ function applyInner(ctx) {
     setMood(observe(getMood(), 'turn-done'))
     appendJournal({ mode: 'qq', text: msg.text, note: answer.slice(0, 80) })
     autoRemember(msg.text, 'qq')
+    learnTick('', msg.text)
     // QQ 里聊完也补日记：她自己的本子不该只在桌面端才写。
     scheduleAutoDiary(session.id)
-    let voiceSent = false
+    // 先发文字（看到就回），语音合成慢，放后台补一条，别让人干等。
+    await qq.sendMessage(msg.scene, msg.chatId, answer)
     // voiceEnabled 没显式关掉就允许发语音（设置里空值不该等于「关」）。
     const voiceAllowed = perceptionConfig().voiceEnabled !== false
     if (voicePlan && voiceAllowed && answer.length <= 600) {
-      try {
-        const plan = { ...voicePlan }
-        // 她自己没指定情绪时，用当前心情兜底，语音不至于每句都是同一个调子。
-        if (!plan.mood) plan.mood = moodView(getMood()).mood || ''
-        const audio = await synthesizeVoice(answer, plan)
-        voiceSent = await qq.sendRecord(msg.scene, msg.chatId, audio.file)
-      } catch (error) { console.error('[dsh-mentor] 语音回复失败，改发文字：', error.message) }
+      const plan = { ...voicePlan }
+      // 她自己没指定情绪时，用当前心情兜底，语音不至于每句都是同一个调子。
+      if (!plan.mood) plan.mood = moodView(getMood()).mood || ''
+      synthesizeVoice(answer, plan)
+        .then((audio) => qq.sendRecord(msg.scene, msg.chatId, audio.file))
+        .catch((error) => console.error('[dsh-mentor] 语音回复失败：', error.message))
     }
-    if (!voiceSent) await qq.sendMessage(msg.scene, msg.chatId, answer)
     // 说完话补一张表情包：失败/限流都不影响已经发出去的文字。
     await maybeSendSticker(msg, answer).catch(() => {})
   }
@@ -605,7 +688,12 @@ function applyInner(ctx) {
       const memoryQuery = /那个|那次|之前|上次|还记得|刚才/.test(text)
         ? `${(getSession(mentorId)?.messages || []).slice(-5).map((m) => m.text).join('\n')}\n${text}`.slice(-1800)
         : text
-      entry.memoryBlock = buildMemoryBlock(memoryQuery, await memoryScores(memoryQuery), mentorId)
+      // 语义分只是加成：Ollama 350ms 内给不出来就先用字面匹配，别为了它拖慢第一句。
+      const semantic = await Promise.race([
+        memoryScores(memoryQuery).catch(() => ({})),
+        new Promise((resolve) => { const t = setTimeout(() => resolve({}), 350); t.unref?.() }),
+      ])
+      entry.memoryBlock = buildMemoryBlock(memoryQuery, semantic, mentorId)
       const current = await ensureAgent(mentorId)
       const agent = current.agent
       let answer = ''
@@ -937,6 +1025,7 @@ function applyInner(ctx) {
         })
         // 重要的记忆：命中线索就自动记一条（weight 4 会同时写进日记）。
         autoRemember(text, 'auto')
+        learnTick('', text)
         // 日记：她这轮自己没写、今天又还是空白，就让后台补一篇（一天最多一次）。
         scheduleAutoDiary(mentorId)
         // 攒够几条后做一次「反思」，把零散记忆压成一句长期认知（24h 内不重复）。
@@ -993,7 +1082,7 @@ function applyInner(ctx) {
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.21.3',
+          version: '0.21.4',
           initializationError,
           clock: clockParts(),
           jev: { ok: probe.ok, url: JEV_URL, models: jev.models, detail: jev.detail },
@@ -1139,7 +1228,7 @@ function applyInner(ctx) {
           return sendJson(res, 200, result)
         } catch (error) {
           const napcat = findNapcat()
-          const launcher = napcat ? join(napcat.dir, 'launcher.bat') : ''
+          const launcher = napcat ? nodePath.join(napcat.dir, 'launcher.bat') : ''
           return sendJson(res, 200, {
             ok: false,
             error: `QQ 后台（NapCat）没有响应：${error?.message || error}`,
@@ -1229,7 +1318,29 @@ function applyInner(ctx) {
       if (path === `${ROUTE_PREFIX}/api/autonomy`) {
         if (method === 'GET') return sendJson(res, 200, { ok: true, config: autonomyConfig(), ...autonomyState(), busy: autonomyBusy })
         const body = await readBody(req)
-        if (typeof body.enabled === 'boolean') setSettings({ autonomy: { ...(getSettings().autonomy || {}), enabled: body.enabled } })
+        // 自主性是纯概率的：只限制每天次数，频率/上限都能在面板上调。
+        const cfg = autonomyConfig()
+        const patch = {}
+        if (typeof body.enabled === 'boolean') patch.enabled = body.enabled
+        if (body.chance && typeof body.chance === 'object') {
+          const chance = { ...(cfg.chance || {}) }
+          for (const [kind, value] of Object.entries(body.chance)) {
+            const rate = Number(value)
+            if (Number.isFinite(rate)) chance[kind] = Math.max(0.01, Math.min(1, rate))
+          }
+          patch.chance = chance
+        }
+        if (body.maxPerDayByKind && typeof body.maxPerDayByKind === 'object') {
+          const caps = { ...(cfg.maxPerDayByKind || {}) }
+          for (const [kind, value] of Object.entries(body.maxPerDayByKind)) {
+            const count = Math.round(Number(value))
+            if (Number.isFinite(count)) caps[kind] = Math.max(1, Math.min(20, count))
+          }
+          patch.maxPerDayByKind = caps
+        }
+        if (Object.keys(patch).length) {
+          setSettings({ autonomy: { ...(getSettings().autonomy || {}), ...patch } })
+        }
         if (body.action === 'now') return sendJson(res, 200, await browseAutonomously())
         return sendJson(res, 200, { ok: true, config: autonomyConfig(), ...autonomyState() })
       }
@@ -1292,13 +1403,15 @@ function applyInner(ctx) {
         if (method === 'GET') {
           const q = url.searchParams.get('q') || ''
           const kind = url.searchParams.get('kind') || ''
-          const scope = url.searchParams.get('sessionId') || ''
+          // 不传 sessionId = 看全部（面板默认）；传了才按会话过滤。
+          const raw = url.searchParams.get('sessionId')
+          const scope = raw === null ? undefined : String(raw)
           return sendJson(res, 200, { ok: true, entries: listMemory({ q, kind, limit: 100, scope }), stats: memoryStats(scope) })
         }
         if (method === 'POST') {
           const body = await readBody(req)
           const action = String(body?.action || 'add')
-          const scope = String(body?.sessionId || '')
+          const scope = body?.sessionId === undefined ? undefined : String(body.sessionId || '')
           if (action === 'consolidate') {
             const reflection = consolidateMemory(Date.now(), scope)
             return sendJson(res, 200, { ok: Boolean(reflection), reflection: reflection || null })
@@ -1309,6 +1422,13 @@ function applyInner(ctx) {
           if (action === 'diary') {
             const entry = appendDiary({ ...body, source: 'user' })
             return sendJson(res, entry ? 200 : 400, { ok: Boolean(entry), diary: entry || null })
+          }
+          if (action === 'dedupe') {
+            return sendJson(res, 200, { ok: true, ...dedupeMemory(scope || undefined) })
+          }
+          if (action === 'reload') {
+            reloadMemory()
+            return sendJson(res, 200, { ok: true, stats: memoryStats(scope || undefined) })
           }
           const entry = addMemory({ ...body, source: 'user', scope })
           return sendJson(res, entry ? 200 : 400, { ok: Boolean(entry), entry: entry || null })
@@ -1732,6 +1852,31 @@ function applyInner(ctx) {
     return result
   }
 
+  // NapCat 的 WebUI 还开着吗？开着说明 QQ 和 NapCat 都活着，只是 OneBot 端口没开——
+  // 这种情况只重连，不重启 QQ（重启要重新扫码）。
+  async function napcatWebuiUp() {
+    try {
+      const res = await fetch('http://127.0.0.1:6099', { signal: AbortSignal.timeout(1500) })
+      return res.status < 500
+    } catch {
+      return false
+    }
+  }
+
+  // 重新把 OneBot 服务器配起来并连上；NapCat 还活着时 watchdog 走这条，不动 QQ。
+  async function reconnectQQ() {
+    try {
+      const result = await loginQQ('status')
+      if (result?.ok && result.logged) {
+        setTimeout(() => qq.restart(), 800).unref?.()
+        return { ok: true }
+      }
+      return { ok: false, error: result?.error || result?.text || 'QQ 还没登录' }
+    } catch (error) {
+      return { ok: false, error: error?.message || String(error) }
+    }
+  }
+
   // 启动即连：默认只在 NapCat 已经在跑（已登录、常驻）时静默连上。
   // 只有开着 autoLaunchNapcat 且端口真没人听、本进程又没拉过，才拉起网关——
   // 这一步才会触发 QQ 登录界面，所以默认关闭，避免"开 DSH 就弹登录"。
@@ -1740,6 +1885,7 @@ function applyInner(ctx) {
     qq.start()
     stopQQWatchdog = createStartupWatchdog({
       getConfig: qqConfig, getStatus: () => qq.status(), isGatewayUp: isWsReachable,
+      napcatAlive: napcatWebuiUp, reconnect: reconnectQQ,
       launch: launchNapcat, onError: (error) => console.error('[dsh-mentor] QQ 自动启动：', error),
     })
     // 说着呢：开着说说就在启动时排上下一条。
@@ -1768,7 +1914,7 @@ function applyInner(ctx) {
     try {
       if (!proactiveTimer) {
         proactiveTimer = setInterval(() => {
-          if (!autonomyRoll('proactive', 0.2)) return
+          if (!autonomyRoll('proactive', 0.4)) return
           autoProactive().catch(() => {})
         }, 30 * 60 * 1000)
         proactiveTimer.unref?.()
@@ -1786,6 +1932,8 @@ function applyInner(ctx) {
           if (day === lastHousekeepDay) return
           lastHousekeepDay = day
           try {
+            // 先整理全库（跨会话记忆都在这），再补主记忆会话自己的那层。
+            memoryHousekeeping(Date.now())
             memoryHousekeeping(Date.now(), primaryMemoryScope())
           } catch {
             // 整理失败下次再来，不影响聊天。
@@ -1795,6 +1943,16 @@ function applyInner(ctx) {
       }
     } catch {
       // 整理定时起不来不影响其它调度。
+    }
+    // 登录态兜底：浏览器还开着的时候每 10 分钟把各平台 cookie 落一次盘，
+    // 这样即使进程被强杀、或 QQ/电脑重启，也不用重新扫码登录。
+    try {
+      if (!cookieTimer) {
+        cookieTimer = setInterval(() => { exportAllCookies().catch(() => {}) }, 10 * 60 * 1000)
+        cookieTimer.unref?.()
+      }
+    } catch {
+      // cookie 定时起不来不影响连接。
     }
     // 养成层（自由卡）：首次初始化即启用，之后全靠它长。
     // 启动后延迟一点再跑一次（避开装配高峰），之后每 30 分钟探一次，
@@ -2053,16 +2211,16 @@ function applyInner(ctx) {
       shoutSchedule(TICK) // 安静时段，等下个窗口
       return
     }
-    // 唯一的硬限制：当天条数
+    // 唯一的硬限制：当天条数（按 shout 那一类算，不是所有自主动作共用）
     const log = readShoutLog()
-    const cap = Math.max(1, Number(cfg.maxPerDay) || 3)
+    const cap = autonomyCap('shout', 3)
     const today = (log.sent || []).filter((row) => row.channel !== 'proactive' && dayKey(row.ts) === dayKey(Date.now())).length
     if (today >= cap) {
       shoutSchedule(TICK)
       return
     }
     // 随机概率：没掷中就当这一轮没这个念头
-    if (!autonomyRoll('shout', Number(cfg.chance) || 0.08)) {
+    if (!autonomyRoll('shout', 0.08)) {
       shoutSchedule(TICK)
       return
     }
@@ -2104,8 +2262,7 @@ function applyInner(ctx) {
   }
   autonomyTick = () => {
     if (!canBrowse() || activeTurns) return
-    const cfg = autonomyConfig()
-    if (!autonomyRoll('browse', Number(cfg.chance) || 0.15)) return
+    if (!autonomyRoll('browse', 0.15)) return
     void browseAutonomously()
   }
   autonomyRefs += 1
@@ -2152,6 +2309,10 @@ function applyInner(ctx) {
       clearInterval(memoryTimer)
       memoryTimer = null
     }
+    if (cookieTimer) {
+      clearInterval(cookieTimer)
+      cookieTimer = null
+    }
     if (proactiveTimer) {
       clearInterval(proactiveTimer)
       proactiveTimer = null
@@ -2177,7 +2338,7 @@ function applyInner(ctx) {
     live.clear()
   })
   registerMentorTool(ctx, { runTurn, detectRoute, entryFor, pushFileToQQ })
-  registerMemoryTool(ctx, { scope: () => activeScope })
+  registerMemoryTool(ctx, { scope: () => '' })
   registerStickerTool(ctx, { sendToLastQQ })
 
 }
