@@ -57,10 +57,10 @@ def synthesize(job):
     base = str(job.get("breezeUrl") or "").rstrip("/")
     if not base:
         raise ValueError("本地语音后端没有启动")
-    payload = {"model": "breeze-tts-2", "input": str(job["text"])}
+    payload = {"model": "breeze-tts-2", "input": str(job["text"]), "response_format": "pcm"}
     instruction = job.get("instruction")
     if instruction:
-        payload["instruction"] = str(instruction)
+        payload["instructions"] = str(instruction)
     if job.get("cfgScale"):
         payload["cfg_scale"] = float(job["cfgScale"])
     request = urllib.request.Request(
@@ -70,15 +70,21 @@ def synthesize(job):
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=180) as response:
-        pcm = response.read()
+        body = response.read()
         rate = int(response.headers.get("X-Sample-Rate") or 24000)
-    if not pcm:
+    if not body:
         raise ValueError("语音后端没有返回音频")
+    if body[:4] == b"RIFF":
+        with open(job["file"], "wb") as out:
+            out.write(body)
+        return {"file": job["file"], "sampleRate": rate}
+    # 开头补 200ms 静音：模型一上来就出声，直接播放会显得第一句冲得很快
+    lead = b"\x00\x00" * int(rate * 0.2)
     with wave.open(job["file"], "wb") as out:
         out.setnchannels(1)
         out.setsampwidth(2)
         out.setframerate(rate)
-        out.writeframes(pcm)
+        out.writeframes(lead + body)
     return {"file": job["file"], "sampleRate": rate}
 
 

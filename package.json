@@ -1,6 +1,6 @@
 {
   "name": "dsh-mentor",
-  "version": "0.21.2",
+  "version": "0.21.3",
   "private": true,
   "type": "module",
   "main": "index.js",
@@ -33,6 +33,7 @@
     "RELEASE_0.20.1.md",
     "RELEASE_0.21.1.md",
     "RELEASE_0.21.2.md",
+    "RELEASE_0.21.3.md",
     "requirements-speech.txt"
   ],
   "engines": {

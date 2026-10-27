@@ -63,11 +63,13 @@ await test('Half life, spaced recall, and explicit corrections', () => {
   assert.equal(replacement.stabilityDays, strengthened)
 })
 await test('Capacity archives old memories while preserving important facts', () => {
+  store.setSettings({ memory: { maxEntries: 500 } })
   const important = memory.add({ text: '很重要的生日约定', weight: 5, diary: false })
   for (let i = 0; i < 505; i++) memory.add({ text: `普通片段-${i}`, weight: 1, diary: false })
   assert.ok(memory.stats().archived > 0)
   assert.ok(memory.list({ limit: 1000 }).some((r) => r.id === important.id))
   assert.equal(memory.list({ limit: 1000 }).length, 508)
+  store.setSettings({ memory: { maxEntries: memory.MAX_ENTRIES } })
 })
 await test('The user talking about being insulted is not scolding the fish', () => {
   assert.equal(mood.readTone('别人说我是废物'), null)

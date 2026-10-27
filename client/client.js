@@ -821,7 +821,8 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       const [health, setHealth] = useState(null)
       const [profile, setProfile] = useState(null)
       const [persona, setPersonaState] = useState(null)
-      const [setup, setSetupState] = useState(() => ({ done: false, mode: 'unset' }))
+      // null = 还不知道（没请求回来），不要用 done:false 冒充「新人」——那会导致每次打开先闪一下向导。
+      const [setup, setSetupState] = useState(() => null)
       const [presets, setPresets] = useState([])
       const [mood, setMoodState] = useState(null)
       const [seen, setSeen] = useState(() => readSeen())
@@ -982,7 +983,8 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           const body = await apiJson(`${API}/setup`)
           setSetupState(body.setup || { done: false, mode: 'unset' })
         } catch {
-          setSetupState({ done: false, mode: 'unset' })
+          // 拉不到不代表没初始化过：保持「未知」，几秒后重试，别把老用户当新人推向导。
+          setTimeout(() => { loadSetup() }, 4000)
         }
       }, [])
 
@@ -1325,7 +1327,11 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         const switched = scrollSessionRef.current !== activeId
         scrollSessionRef.current = activeId
         const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
-        if (switched || nearBottom) el.scrollTop = el.scrollHeight
+        if (switched || nearBottom) {
+          el.scrollTop = el.scrollHeight
+          // 图片、字体、代码块展开会撑高内容，下一帧再贴一次底，打开就是最新一条。
+          requestAnimationFrame(() => { if (scrollRef.current === el) el.scrollTop = el.scrollHeight })
+        }
       }, [messages, activeId])
 
       const refreshProfile = useCallback(async () => {
@@ -2401,12 +2407,14 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       const [form, setForm] = useState({ day: '周一', name: '', period: '', location: '', teacher: '' })
       const [busy, setBusy] = useState(false)
       const [notice, setNotice] = useState('')
+      const [termWeek, setTermWeek] = useState(null)
 
       const reload = useCallback(async () => {
         try {
           const body = await apiJson(`${API}/schedule`)
           setCourses(body.courses || [])
           if (body.remote) setRemote(body.remote)
+          setTermWeek(body.termWeek || null)
         } catch {
           setNotice('课表没加载出来（宿主可能还没起来）。')
         }
@@ -2499,7 +2507,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           h('button', { className: 'dm-btn dm-primary', disabled: busy || !remote.studentId, onClick: syncRemote, title: '从服务器拉课表覆盖本地（会先备份）' }, busy ? '同步中…' : '从服务器同步'),
         ),
         h('div', { className: 'dm-muted', style: { fontSize: '12px', margin: '2px 0 4px' } },
-          '启动时也会自动同步一次。同步是覆盖式：服务器为准，本地课表先备份成 courses.local.json。'),
+          `启动时也会自动同步一次。同步是覆盖式：服务器为准，本地课表先备份成 courses.local.json。${termWeek ? `现在是第 ${termWeek} 周，课表按教学周过滤。` : ''}`),
         h('div', { className: 'dm-sec' }, '加一门课'),
         h('div', { className: 'dm-sched-form' },
           h('select', { className: 'dm-input-sm', value: form.day, onChange: setField('day') },
@@ -3679,7 +3687,8 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         // 首次初始化向导：没跑过就盖在最上层。先给大肥鱼定个初始性格（只这一次），选完即锁定；
         // 之后它从聊天 / 学习 / 网上冲浪长成「自由卡」，不能再改。
         // saveSetup 会更新 state.setup，触发重渲染自动收起向导。
-        !state.setup?.done
+        // 首次初始化向导：只有后端明确说 done===false 才弹；未知（null/加载中）不弹。
+        state.setup && state.setup.done === false
           ? h(SetupWizard, {
               state,
               onPick: async (choice) => {
