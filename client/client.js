@@ -11,7 +11,7 @@ window.__ModuleLoader__.load({
     const API = '/dsh-mentor/api'
     const PANEL_ID = 'dsh-mentor'
     const TITLE = '大肥鱼'
-    const CLIENT_VERSION = 30
+    const CLIENT_VERSION = 31
 
     /** 本窗口不渲染表情包；宿主全局提示词里那套 [表情: …] 标记到这里会变成噪音，直接剥掉。 */
     const cleanText = (value) => String(value ?? '').replace(/\[表情[:：][^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').trim()
@@ -2181,7 +2181,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         try {
           const result = await apiJson(`${API}/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
           if (route === 'social' && result.needsLogin) setQzone(result)
-          if (!result.ok) throw new Error(result.error || '这次没有完成')
+          if (!result.ok) throw new Error(result.error || result.reason || '这次没有完成')
           if (route === 'social' && ['login', 'check'].includes(body.action)) { setQzone(result); setLocalNotice(result.logged ? '大肥鱼的空间已登录' : result.accountMismatch ? '当前是另一QQ账号，请切换为大肥鱼的账号' : '请用大肥鱼的QQ扫描空间二维码，并在手机确认；会自动检查登录') }
           else if (result.url && route === 'perception') setSample(result.url)
           else setLocalNotice(result.text || '已保存')
@@ -2404,28 +2404,30 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           )),
         ) : null,
         h('div', { className: 'dm-sec' }, '她自己的兴趣'),
-        h('label', { className: 'dm-check' }, h('input', { type: 'checkbox', checked: autonomy?.config?.enabled !== false, disabled: Boolean(actionBusy), onChange: async (e) => { const result = await request('autonomy', { enabled: e.target.checked }); if (result) setAutonomy(result) } }), '空闲时自己逛逛公开内容'),
-        h('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginTop: '8px' } },
-          ...[['shout', '发说说'], ['reply', '回评论'], ['proactive', '主动聊天'], ['browse', '自己逛逛']].map(([kind, label]) =>
+        h('label', { className: 'dm-check' }, h('input', { type: 'checkbox', checked: autonomy?.config?.enabled !== false, disabled: Boolean(actionBusy), onChange: async (e) => { const result = await request('autonomy', { enabled: e.target.checked }); if (result) setAutonomy(result) } }), '允许她空闲时自主行动'),
+        h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(230px,1fr))', gap: '6px', marginTop: '8px' } },
+          ...[['shout', '发说说'], ['reply', '回评论'], ['proactive', '主动聊天'], ['browse', '自己逛逛'], ['like', '按兴趣点赞']].map(([kind, label]) =>
             h('label', { key: kind, style: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', whiteSpace: 'nowrap' } },
               h('span', { style: { minWidth: '52px' } }, label),
               h('input', {
-                type: 'number', min: '1', max: '20', className: 'dm-input', style: { width: '48px' },
-                defaultValue: autonomy?.config?.maxPerDayByKind?.[kind] ?? '', disabled: Boolean(actionBusy),
+                key: `${kind}:count:${autonomy?.config?.maxPerDayByKind?.[kind] ?? 'loading'}`,
+                type: 'number', min: '0', max: '20', className: 'dm-input-sm', style: { width: '62px', minWidth: '62px' },
+                defaultValue: autonomy?.config?.maxPerDayByKind?.[kind] ?? '', disabled: Boolean(actionBusy) || !autonomy,
                 onBlur: async (e) => {
                   const count = Math.round(Number(e.target.value))
-                  if (!Number.isFinite(count) || count < 1) return
+                  if (!e.target.value.trim() || !Number.isFinite(count) || count < 0) return
                   const result = await request('autonomy', { maxPerDayByKind: { [kind]: count } })
                   if (result) setAutonomy(result)
                 },
               }),
               '次/天',
               h('input', {
-                type: 'number', min: '1', max: '100', className: 'dm-input', style: { width: '46px' },
-                defaultValue: Math.round((autonomy?.config?.chance?.[kind] ?? 0) * 100), disabled: Boolean(actionBusy),
+                key: `${kind}:chance:${autonomy?.config?.chance?.[kind] ?? 'loading'}`,
+                type: 'number', min: '0', max: '100', className: 'dm-input-sm', style: { width: '58px', minWidth: '58px' },
+                defaultValue: Math.round((autonomy?.config?.chance?.[kind] ?? 0) * 100), disabled: Boolean(actionBusy) || !autonomy,
                 onBlur: async (e) => {
                   const rate = Math.round(Number(e.target.value))
-                  if (!Number.isFinite(rate) || rate < 1) return
+                  if (!e.target.value.trim() || !Number.isFinite(rate) || rate < 0) return
                   const result = await request('autonomy', { chance: { [kind]: rate / 100 } })
                   if (result) setAutonomy(result)
                 },
@@ -2434,7 +2436,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
             ),
           ),
         ),
-        h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, '先从 B 站公开内容开始，每天最多两次，夜间休息；她的抖音账号准备好后再接入私信分享。豆包和即梦可在「平台登录」里登录，再直接让她生图或做视频。'),
+        h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, '次数或概率设为0可暂停单项。刚聊过会歇一会儿，私聊没回不追发；点赞依据真实兴趣，空间自动发表仍由上方开关决定。浏览先支持B站公开标题和简介，不表示已看完整视频。'),
         h('div', { style: { display: 'flex', gap: '6px', marginTop: '10px' } },
           h('button', { className: 'dm-btn dm-primary', style: { flex: 1 }, onClick: () => state.saveQQ({ ...draft, enabled: true }) }, '保存并连接'),
           h('button', { className: 'dm-btn', onClick: () => state.testQQ() }, '测试'),

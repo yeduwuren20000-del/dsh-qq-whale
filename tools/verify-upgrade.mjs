@@ -255,6 +255,14 @@ try {
     const result = await tools.get('companion').execute({ action: 'qzonePublish', id: 'not-published' })
     assert.equal(result.ok, false); assert.match(result.text, /确认|自动发表/)
   })
+  await test('Autonomy settings accept zero and paused actions perform no model work', async () => {
+    const before = modelCalls
+    const updated = JSON.parse((await call('POST', 'autonomy', { enabled: false, chance: { like: 0 }, maxPerDayByKind: { like: 0 } })).body)
+    assert.equal(updated.config.chance.like, 0); assert.equal(updated.config.maxPerDayByKind.like, 0)
+    const paused = JSON.parse((await call('POST', 'autonomy', { action: 'now' })).body)
+    assert.equal(paused.ok, false)
+    assert.equal(modelCalls, before)
+  })
   await test('Exact clock replies do not call the chat model', async () => {
     const session = store.createSession({ title: 'clock test', mode: 'chat' }), before = modelCalls
     const response = await call('POST', 'turn', { sessionId: session.id, text: '现在几点了？' })

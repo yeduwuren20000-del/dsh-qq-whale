@@ -1,6 +1,6 @@
 {
   "name": "dsh-qq-whale",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "private": true,
   "type": "module",
   "main": "index.js",
@@ -31,7 +31,8 @@
     "tools/",
     "requirements-speech.txt",
     "CREATIVE_TOOLS.md",
-    "RELEASE_0.22.0.md",
+    "SOCIAL_BEHAVIOR.md",
+    "RELEASE_0.22.1.md",
     "TOOLS.md",
     "INSTALL.cmd",
     "install.ps1",
@@ -74,6 +75,8 @@
     "verify:conversation": "node tools/verify-conversation.mjs",
     "verify:personality": "node tools/verify-personality.mjs",
     "verify:creative": "node tools/verify-creative.mjs",
+    "verify:social": "node tools/verify-social-personality.mjs",
+    "verify:social-ui": "node tools/verify-social-ui.mjs",
     "verify:release": "node tools/verify-release.mjs"
   },
   "repository": {
