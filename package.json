@@ -80,7 +80,8 @@
     "verify:social": "node tools/verify-social-personality.mjs",
     "verify:social-ui": "node tools/verify-social-ui.mjs",
     "verify:release": "node tools/verify-release.mjs",
-    "verify:voice-worker": "node tools/verify-cosy.mjs"
+    "verify:voice-worker": "node tools/verify-cosy.mjs",
+    "verify:privacy": "node tools/verify-public-data.mjs"
   },
   "repository": {
     "type": "git",
