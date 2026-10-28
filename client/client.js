@@ -11,7 +11,7 @@ window.__ModuleLoader__.load({
     const API = '/dsh-mentor/api'
     const PANEL_ID = 'dsh-mentor'
     const TITLE = '大肥鱼'
-    const CLIENT_VERSION = 29
+    const CLIENT_VERSION = 30
 
     /** 本窗口不渲染表情包；宿主全局提示词里那套 [表情: …] 标记到这里会变成噪音，直接剥掉。 */
     const cleanText = (value) => String(value ?? '').replace(/\[表情[:：][^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').trim()
@@ -344,7 +344,7 @@ window.__ModuleLoader__.load({
 .dm-drawer-x{width:26px;height:26px;border:none;background:transparent;color:var(--dm-muted);
   font-size:16px;line-height:1;cursor:pointer;border-radius:6px}
 .dm-drawer-x:hover{background:var(--dm-hover);color:var(--dm-text)}
-.dm-drawer-tabs{flex-shrink:0;display:flex;gap:2px;padding:0 10px;border-bottom:1px solid var(--dm-line);
+.dm-drawer-tabs{flex-shrink:0;display:flex;flex-wrap:wrap;gap:2px;padding:0 10px;border-bottom:1px solid var(--dm-line);
   overflow-x:auto;scrollbar-width:none}
 .dm-drawer-tabs::-webkit-scrollbar{display:none}
 .dm-drawer-tab{height:33px;padding:0 10px;border:none;background:transparent;color:var(--dm-muted);
@@ -380,6 +380,13 @@ window.__ModuleLoader__.load({
 .dm-field > .dm-chips,.dm-field > .dm-range,.dm-field > .dm-check,
 .dm-field > input,.dm-field > textarea,.dm-field > select{flex:1;min-width:0}
 .dm-field > input,.dm-field > textarea,.dm-field > select{width:auto}
+.dm-field-label{width:84px;flex-shrink:0;font-size:12px;color:var(--dm-text);line-height:1.6}
+.dm-field-value{flex:1;min-width:0;font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--dm-text)}
+.dm-persona .dm-drawer-tab{color:var(--dm-text)}
+.dm-persona .dm-drawer-tab.on{color:color-mix(in srgb,var(--dm-brand-d) 75%,var(--dm-text))}
+.dm-persona .dm-growth-grow{background:color-mix(in srgb,var(--dm-brand) 70%,#000);color:#fff}
+.dm-persona .dm-muted,.dm-persona .dm-sec,.dm-persona .dm-growth-k,.dm-persona .dm-growth-note,.dm-persona .dm-growth-badge{color:color-mix(in srgb,var(--dm-text) 75%,transparent)}
+.dm-persona .dm-growth-foot .dm-growth-note{color:var(--dm-text)}
 .dm-field > .dm-check{margin:4px 0 0}
 .dm-input-sm{width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:6px 8px;border-radius:6px;
   border:1px solid var(--dm-line-2);background:var(--dm-surface);color:var(--dm-text);outline:none;
@@ -569,6 +576,10 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
   padding:6px 14px;border-radius:8px;font-weight:600}
 .dm-growth-grow:disabled{opacity:.55;cursor:default}
 .dm-growth-note{font-size:11.5px;color:var(--dm-muted)}
+.dm-growth-foot{flex-wrap:wrap;align-items:flex-start}
+.dm-growth-grow{white-space:nowrap;flex-shrink:0}
+.dm-growth-foot .dm-growth-note{flex-basis:100%;font-size:12px;line-height:1.6;white-space:normal;overflow-wrap:anywhere;color:var(--dm-text)}
+.dm-growth-v{overflow-wrap:anywhere}
 .dm-growth-log{margin-top:8px;font-size:11px;color:var(--dm-faint);line-height:1.6}
 .dm-growth-log i{font-style:normal;display:block}
 
@@ -1599,7 +1610,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
     /* ------------------------------------------------------- 右侧抽屉（QQ 设置面板） */
 
     function Drawer(props) {
-      const { title, tabs, tab, onTab, onClose, foot, children } = props
+      const { title, tabs, tab, onTab, onClose, foot, children, className = '' } = props
       useEffect(() => {
         const onKey = (event) => {
           if (event.key === 'Escape') onClose()
@@ -1613,7 +1624,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         h('div', { className: 'dm-drawer-mask', onMouseDown: onClose }),
         h(
           'div',
-          { className: 'dm-drawer', onMouseDown: (event) => event.stopPropagation() },
+          { className: `dm-drawer ${className}`, onMouseDown: (event) => event.stopPropagation() },
           h(
             'div',
             { className: 'dm-drawer-head' },
@@ -1740,7 +1751,18 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
     const chipLabel = (option) => (Array.isArray(option) ? option[1] : option)
 
     function DimField(props) {
-      const { field, value, onChange } = props
+      const { field, value, onChange, readOnly } = props
+      if (readOnly) {
+        let shown = Array.isArray(value) ? value.join('、') : value
+        if (field.type === 'bool' && typeof value === 'boolean') shown = value ? '开启' : '关闭'
+        if (field.type === 'chips') {
+          const selected = (field.options || []).find((option) => String(chipValue(option)) === String(value))
+          shown = selected ? chipLabel(selected) : value
+        }
+        return h('div', { className: 'dm-field', 'data-persona-field': field.key },
+          h('div', { className: 'dm-field-label' }, field.label),
+          h('div', { className: 'dm-field-value' }, shown === undefined || shown === null || shown === '' ? '未设置' : String(shown)))
+      }
       const set = (next) => onChange(field.key, next)
       const body = (() => {
         if (field.type === 'chips') {
@@ -1812,7 +1834,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
     }
 
     function PersonaDrawer(props) {
-      const { persona, presets, onSave, onClose, startTab, setup, onSetup } = props
+      const { persona, presets, onSave, onClose, startTab, setup, onSetup, onRetry } = props
       const [tab, setTab] = useState(startTab || 'preset')
       const [draft, setDraft] = useState(() => toDraft(persona || {}))
       const [dims, setDims] = useState(() => JSON.parse(JSON.stringify(persona?.dims || {})))
@@ -1907,7 +1929,8 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         if (next) setSaved('预设已套用（六维跟着重置）')
       }
 
-      const tabs = [{ id: 'preset', label: '预设' }].concat(
+      const locked = Boolean(setup?.personaLocked)
+      const tabs = [{ id: 'preset', label: locked ? '概览' : '预设' }].concat(
         DIM_IDS.map((id) => ({ id, label: PERSONA_SCHEMA[id].label })),
       )
 
@@ -1971,27 +1994,26 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           React.Fragment,
           null,
           h('div', { className: 'dm-sec' }, `${schema.label} · ${count} 个字段`),
-          schema.fields.map((row) => h(DimField, { key: row.key, field: row, value: bag[row.key], onChange: (key, value) => setDim(tab, key, value) })),
+          schema.fields.map((row) => h(DimField, { key: row.key, field: row, value: bag[row.key], readOnly: locked, onChange: (key, value) => setDim(tab, key, value) })),
           h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7, marginTop: '4px' } },
-            '这些字段会拼进每次对话的系统提示词；留空就沿用默认推导值。'),
+            locked ? '这是保留下来的六维底卡，只读展示。后来形成的偏好与习惯在概览的成长记录里查看。' : '这些字段影响她的表达与做事习惯；留空沿用默认值。'),
         )
       })()
 
-      // 人格只在首次初始化时能设；之后锁定，真正说话的样子完全由「自由卡」长出来。
-      const locked = Boolean(setup && setup.done)
+      // 记忆生成的底卡按服务端标记保持只读；成长认识补充稳定基线。
       // 锁定后展示的只读「初始设定」块：只显示你最初给的底子，不能再改。
       const seedBlock = locked
         ? h(
             React.Fragment,
             null,
-            h('div', { className: 'dm-sec' }, '初始设定（仅首次设置时可改）'),
+            h('div', { className: 'dm-sec' }, '六维底卡概览'),
             h(
               'div',
               { className: 'dm-growth' },
               h('div', { className: 'dm-growth-row' }, h('div', { className: 'dm-growth-k' }, '名字'), h('div', { className: 'dm-growth-v' }, draft.name || '大肥鱼')),
               draft.relationship ? h('div', { className: 'dm-growth-row' }, h('div', { className: 'dm-growth-k' }, '关系'), h('div', { className: 'dm-growth-v' }, draft.relationship)) : null,
               draft.traits ? h('div', { className: 'dm-growth-row' }, h('div', { className: 'dm-growth-k' }, '初始性格标签'), h('div', { className: 'dm-growth-v' }, draft.traits)) : null,
-              h('div', { className: 'dm-growth-note' }, '这是你最初给的底子，之后不再改动；真正说话的样子由下面的「自由卡」长出来。'),
+              h('div', { className: 'dm-growth-note' }, '底卡保留稳定的身份与边界；后来形成的喜好和习惯记录在自由卡里。'),
             ),
           )
         : null
@@ -1999,22 +2021,25 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       // 「自由卡」：大肥鱼从聊天 / 学习 / 网上冲浪里自己长出来的性格，和初始设定并排显示。
       const [growth, setGrowth] = useState(null)
       const [growing, setGrowing] = useState(false)
+      const [growthNotice, setGrowthNotice] = useState('')
       const loadGrowth = useCallback(async () => {
         try {
           const b = await apiJson(`${API}/persona/grow`)
           setGrowth(b)
         } catch {
-          // 拿不到不影响编辑卡。
+          setGrowthNotice('成长记录暂时未加载，六维底卡仍可查看。')
         }
       }, [])
       useEffect(() => { loadGrowth() }, [loadGrowth])
       const growNow = async () => {
         setGrowing(true)
+        setGrowthNotice('')
         try {
           const b = await apiJson(`${API}/persona/grow`, { method: 'POST' })
-          setGrowth(b.status || b)
-        } catch {
-          // 生长失败（比如没 agent）时保持原样。
+          if (b.status || b.ok !== false) setGrowth(b.status || b)
+          setGrowthNotice(b.ok === false ? (b.error || '最近经历还不够，现有记录已保留。') : '已根据最近经历更新，下一次聊天会参考这些认识。')
+        } catch (error) {
+          setGrowthNotice(`这次没能更新，现有记录已保留。${error.message || ''}`)
         } finally {
           setGrowing(false)
         }
@@ -2024,14 +2049,14 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       const growthCard = h(
         React.Fragment,
         null,
-        h('div', { className: 'dm-sec' }, '自由卡（它自己从聊天、学习、网上冲浪里长出来的）'),
+        h('div', { className: 'dm-sec' }, '成长记录 · 自由卡'),
         h(
           'div',
           { className: 'dm-growth' },
           h(
             'div',
             { className: 'dm-growth-head' },
-            h('div', { className: 'dm-growth-title' }, gGrown ? '它是这样的' : '还没长出来'),
+            h('div', { className: 'dm-growth-title' }, gGrown ? '相处后形成的认识' : '正在积累经历'),
             h('div', { className: 'dm-growth-badge' }, growth?.updatedAt ? `更新于 ${new Date(growth.updatedAt).toLocaleDateString()}` : '种子态'),
           ),
           gGrown
@@ -2042,13 +2067,14 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
               gSelf.voice ? h('div', { className: 'dm-growth-row' }, h('div', { className: 'dm-growth-k' }, '说话 / 干活的真实样子'), h('div', { className: 'dm-growth-v' }, gSelf.voice)) : null,
               gSelf.understandingOfUser ? h('div', { className: 'dm-growth-row' }, h('div', { className: 'dm-growth-k' }, '对你的了解'), h('div', { className: 'dm-growth-v' }, gSelf.understandingOfUser)) : null,
             )
-            : h('div', { className: 'dm-growth-empty' }, '它还在最初的样子。多用一阵（或点下面按钮），会从你们的聊天、一起学习、网上冲浪里自己长出更真实的性格。'),
+            : h('div', { className: 'dm-growth-empty' }, growth === null ? '正在读取成长记录…' : '还没有足够经历形成新的认识。可以先继续聊天、一起做事，再根据这些记录更新。'),
           h(
             'div',
             { className: 'dm-growth-foot' },
-            h('button', { className: 'dm-growth-grow', onClick: growNow, disabled: growing }, growing ? '生长中…' : (gGrown ? '重新生长一次' : '现在就长一次')),
-            h('div', { className: 'dm-growth-note' }, '这段是它自己长出来的「自由卡」，会压过上面的初始设定'),
+            h('button', { className: 'dm-growth-grow', onClick: growNow, disabled: growing }, growing ? '正在整理经历…' : '根据最近经历更新'),
+            h('div', { className: 'dm-growth-note' }, '梳理已有记忆、日记和见闻，更新对自己与你的理解。保留已有记录，六维底卡不变；会使用当前对话模型，消耗 token。'),
           ),
+          growthNotice ? h('div', { className: 'dm-growth-note', role: 'status', style: { marginTop: '8px' } }, growthNotice) : null,
           (growth?.growthLog && growth.growthLog.length)
             ? h('div', { className: 'dm-growth-log' }, growth.growthLog.slice(0, 4).map((e) => h('i', { key: e.at }, `· ${new Date(e.at).toLocaleDateString()} ${e.note || ''}`)))
             : null,
@@ -2059,11 +2085,12 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         Drawer,
         {
           title: () => `性格 · ${draft.name || '大肥鱼'}`,
-          tabs: locked ? [] : tabs,
+          className: 'dm-persona',
+          tabs,
           tab,
           onTab: setTab,
           onClose,
-          foot: locked
+          foot: locked || !persona || !setup
             ? null
             : h(
                 'div',
@@ -2073,9 +2100,11 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
                 h('div', { className: 'dm-muted' }, saved || '保存后下一条消息生效'),
               ),
         },
-        seedBlock,
-        growthCard,
-        locked ? null : body,
+        !persona ? h('div', { className: 'dm-empty-block', role: 'status' }, '性格卡还没加载出来。', onRetry ? h('button', { className: 'dm-btn', onClick: onRetry }, '重新加载') : null) : null,
+        persona && tab === 'preset' ? h(React.Fragment, null,
+          h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, '六维底卡共 41 项。上方可查看六个维度；成长记录保留后来形成的认识。'),
+          seedBlock, growthCard, locked ? null : body) : null,
+        persona && tab !== 'preset' ? body : null,
       )
     }
 
@@ -3606,7 +3635,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
               }, '删除这条'),
             )
           : null,
-        panel === 'persona' ? h(PersonaDrawer, { persona: state.persona, presets: state.presets, onSave: state.savePersona, onClose: close, setup: state.setup, onSetup: state.saveSetup }) : null,
+        panel === 'persona' ? h(PersonaDrawer, { persona: state.persona, presets: state.presets, onSave: state.savePersona, onClose: close, setup: state.setup, onSetup: state.saveSetup, onRetry: state.loadPersona }) : null,
         panel === 'login' ? h(LoginPanel, { onClose: close }) : null,
         panel === 'memory' ? h(MemoryDrawer, { state, onClose: close, startTab: memTab, onPick: () => fileRef.current?.click() }) : null,
         panel === 'components' ? h(ComponentsPanel, { onClose: close }) : null,

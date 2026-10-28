@@ -1,3 +1,4 @@
+import { buildConversationBlock } from './lib/conversation.js'
 import { replyPreference, deliverQQReply } from './lib/qq-reply.js'
 /**
  * 学伴（dsh-mentor）—— 宿主侧。
@@ -132,7 +133,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.21.9',
+      version: '0.21.10',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -572,8 +573,8 @@ function applyInner(ctx) {
         prompt.section({ name: 'mentor:growth', order: 0.522, text: '{{mentor_growth}}' })
       }
       // 情绪：每轮重新解析，所以"刚干完一件难事"会立刻影响下一句的语气。
-      prompt.variable('mentor_mood', () => buildMoodBlock(getMood()))
-      prompt.section({ name: 'mentor:mood', order: 0.53, text: '{{mentor_mood}}' })
+      prompt.context({ name: 'mentor:mood', order: 135, text: () => buildMoodBlock(getMood()) })
+      prompt.context({ name: 'mentor:conversation', order: 140, text: () => entry.conversationBlock || '' })
       // 记忆：按这一轮的话挑相关的几条，没有就不注入。
       prompt.variable('mentor_memory', () => entry.memoryBlock || buildMemoryBlock(currentQuery, {}, activeScope || mentorId))
       prompt.section({ name: 'mentor:memory', order: 0.54, text: '{{mentor_memory}}' })
@@ -697,6 +698,7 @@ function applyInner(ctx) {
       const preference = replyPreference(text)
       entry.requireVoice = preference === 'voice'
       entry.replyText = preference === 'text'
+      entry.conversationBlock = buildConversationBlock(text, getSession(mentorId)?.messages || [])
       currentQuery = text
       activeScope = mentorId
       currentScene = entry.scene ? `${entry.scene.kind === 'group' ? '群聊' : '私聊'}（${entry.scene.name || entry.scene.chatId}）` : ''
@@ -1150,7 +1152,7 @@ function applyInner(ctx) {
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.21.9',
+          version: '0.21.10',
           initializationError,
           chatModel: defaultRoute() || null,
           toolAccess: [...live.values()].filter((row) => row.toolStats).map((row) => row.toolStats()),

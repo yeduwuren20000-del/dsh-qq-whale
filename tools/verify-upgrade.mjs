@@ -188,6 +188,17 @@ try {
     assert.ok(tools.get('browser').parameters.properties.action.enum.includes('download'))
     assert.ok(tools.get('browser').parameters.properties.action.enum.includes('inspect'))
   })
+  await test('Recent user context and mood update without recreating the chat driver', async () => {
+    const session = store.createSession({ title: 'context fixture', mode: 'chat' })
+    await call('POST', 'turn', { sessionId: session.id, text: '我很困，但还得上课', mode: 'chat' })
+    const context = contexts.findLast((row) => row.name === 'mentor:conversation')
+    assert.match(context.text(), /别一律催睡/)
+    const state = contexts.findLast((row) => row.name === 'mentor:mood')
+    store.setMood(mood.observe(store.getMood(), 'praise'))
+    assert.match(state.text(), /开心/)
+    await call('POST', 'turn', { sessionId: session.id, text: '我现在不困了，已经好了', mode: 'chat' })
+    assert.equal(context.text(), '')
+  })
   await test('A retired model reports an SSE error instead of returning an old reply or fabricated greeting', async () => {
     const session = store.createSession({ title: 'failure fixture', mode: 'chat' })
     behavior = 'model-error'
