@@ -2328,7 +2328,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           : null,
         h('div', { className: 'dm-sec' }, 'QQ 语音'),
         h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } },
-          `当前电脑本地处理 · 听语音${state.qq?.perception?.asr ? '已就绪' : '待就绪'} · 说话${state.qq?.perception?.tts ? '已就绪' : '待就绪'} · 看图片${state.qq?.perception?.vision ? '已就绪' : '待就绪'}`),
+          `${state.qq?.perception?.processingLocation === 'ssh' ? '远端私有环境 · 按需运行' : '当前电脑本地处理'} · 听语音${state.qq?.perception?.asr ? '已就绪' : '待就绪'} · 说话${state.qq?.perception?.tts ? '已就绪' : '待就绪'} · 看图片${state.qq?.perception?.vision ? '已就绪' : '待就绪'}`),
         h('label', { className: 'dm-check' }, h('input', {
           type: 'checkbox', checked: state.qq?.perception?.voiceEnabled !== false, disabled: Boolean(actionBusy),
           onChange: (e) => request('perception', { voiceEnabled: e.target.checked }),
@@ -2338,13 +2338,13 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         h('div', { className: 'dm-qq-row' },
           h('label', { htmlFor: 'dm-speech-engine' }, '说话方式'),
           h('select', { id: 'dm-speech-engine', className: 'dm-input-sm', value: state.qq?.perception?.ttsBackend || 'breeze', disabled: Boolean(actionBusy), onChange: e => request('perception', { ttsBackend: e.target.value }) },
-            h('option', { value: 'breeze' }, '日常聊天 · 回复快'),
+            h('option', { value: 'breeze', disabled: state.qq?.perception?.processingLocation === 'ssh' }, '日常聊天 · 本机 Breeze'),
             h('option', { value: 'cosyvoice', disabled: !state.qq?.perception?.cosyAvailable }, state.qq?.perception?.cosyAvailable ? '细腻语气 · 等待较久' : '细腻语气 · 需安装 CosyVoice'))),
         h('button', { className: 'dm-btn', disabled: Boolean(actionBusy) || !state.qq?.perception?.tts, onClick: () => request('perception', { action: 'sample' }) }, actionBusy === 'sample' ? '正在准备声音…' : '试听当前声音'),
         h('div', { className: 'dm-qq-row' },
           h('label', { htmlFor: 'dm-singing-engine' }, '唱歌方式'),
           h('select', { id: 'dm-singing-engine', className: 'dm-input-sm', value: state.qq?.perception?.singingBackend || 'rvc', disabled: Boolean(actionBusy), onChange: e => request('perception', { singingBackend: e.target.value }) },
-            h('option', { value: 'rvc' }, 'RVC · 已训练声模'),
+            h('option', { value: 'rvc', disabled: state.qq?.perception?.processingLocation === 'ssh' }, 'RVC · 本机已训练声模'),
             h('option', { value: 'seed-vc', disabled: !state.qq?.perception?.seedAvailable }, state.qq?.perception?.seedAvailable ? 'Seed-VC · 固定参考音色' : 'Seed-VC · 需安装模型'))),
         sample ? h('audio', { controls: true, src: sample, style: { display: 'block', width: '100%', marginTop: '8px' } }) : null,
         h('div', { className: 'dm-sec' }, '空间说说与碎碎念'),
@@ -3694,9 +3694,9 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         action('打开平台登录', 'login'),
         h('div', { className: 'dm-sec' }, '5 · 听语音、说话和唱歌'),
         h('p', { className: 'dm-setup-p' }, '听写选 SenseVoice；日常说话选 Breeze，细腻语气可选 CosyVoice；唱歌可选 Seed-VC 或自己的 RVC 声模。说话与唱歌使用固定音色，长歌通过 QQ 语音分段发送。大模型需按工具说明单独安装。'),
-        h('div', { className: 'dm-sec' }, '数据保存在本机'),
-        h('p', { className: 'dm-setup-p' }, state.setup?.done ? '当前使用本机已保存的档案。升级、重装会继续读取原来的日记和记忆，不会因为重装自动清空；这不表示日记包含在 GitHub 安装包里。' : '新用户从空白档案开始，不预填其他人的日记、QQ 或经历。日记、账号和登录资料保存到当前电脑。'),
-        h('p', { className: 'dm-setup-p' }, '本机识图和语音不上传共享服务器。文字聊天使用你在 DSH 选择的模型；网站创作使用你登录的服务。用量可以在「白饭」查看。'))
+        h('div', { className: 'dm-sec' }, state.health?.remoteState?.remote ? '档案保存在远端私有环境' : '数据保存在本机'),
+        h('p', { className: 'dm-setup-p' }, state.health?.remoteState?.remote ? `日记、记忆和聊天档案保存在你配置的服务器。本机使用内存缓存；断网时临时保留未同步记录，确认保存后清除。待同步 ${state.health.remoteState.pendingFiles || 0} 项。${state.health.remoteState.error ? '同步异常，未同步记录已保留。' : ''}` : state.setup?.done ? '当前使用本机已保存的档案。升级、重装会继续读取原来的日记和记忆，不会因为重装自动清空；这不表示日记包含在 GitHub 安装包里。' : '新用户从空白档案开始，不预填其他人的日记、QQ 或经历。日记、账号和登录资料保存到当前电脑。'),
+        h('p', { className: 'dm-setup-p' }, state.health?.perception?.processingLocation === 'ssh' ? '识图和语音通过 SSH 发送到你配置的服务器；原始处理媒体在任务结束后删除，固定音色单独保存。文字聊天继续使用 DSH 中选择的模型。' : '默认在本机识图和处理语音；启用远端模式后会发送到你明确配置的服务器。文字聊天使用 DSH 中选择的模型。用量可以在「白饭」查看。'))
     }
 
     /* ------------------------------------------------- 首次初始化向导 */

@@ -10,7 +10,11 @@ import { replyPreference, deliverQQReply } from './lib/qq-reply.js'
  *  3. 先把意图判出来（本地 Jev/gutsy 优先，规则兜底），再决定怎么教。
  */
 import { randomUUID } from 'node:crypto'
-import fs from 'node:fs'
+import fs from './lib/state-fs.js'
+import { bridgeConfig, initializeRemoteState, flushRemoteState, remoteStateStatus } from './lib/remote-state.js'
+import { finalizeRemoteMigration, remoteCleanupStatus } from './lib/remote-cleanup.js'
+import { ensureRemoteArtifact } from './lib/remote-artifacts.js'
+import { remoteMediaConfig } from './lib/remote-media.js'
 import net from 'node:net'
 import { spawn } from 'node:child_process'
 import nodePath from 'node:path'
@@ -138,7 +142,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.23.0',
+      version: '0.23.1',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -150,11 +154,31 @@ export function apply(ctx) {
   }
   // 插件坏掉不该拖垮整个宿主：装配期的任何异常都在这里就地吞掉并留痕。
   try {
+    if (bridgeConfig()) return startRemotePlugin(ctx)
     applyInner(ctx)
   } catch (error) {
     initializationError = String(error?.stack || error)
     console.error('[dsh-mentor] 装配失败：', initializationError)
   }
+}
+function startRemotePlugin(ctx) {
+  let retry, unregister, disposed = false
+  ctx.effect(() => () => { disposed = true; clearTimeout(retry); unregister?.() })
+  async function attempt() {
+    try { await initializeRemoteState() }
+    catch (error) {
+      if (disposed) return
+      initializationError = error.message
+      if (!unregister) ctx.inject?.(['webServer'], web => {
+        unregister = web.webServer?.register({ kind: 'prefix', path: ROUTE_PREFIX, handler: (_req, res) => sendJson(res, 503, { ok: false, error: `远端档案暂未连接，原记录已保留，正在重连：${initializationError}` }) })
+      })
+      retry = setTimeout(() => { void attempt() }, 30000); retry.unref?.(); return
+    }
+    if (disposed) return
+    unregister?.(); unregister = undefined; initializationError = ''
+    applyInner(ctx); void finalizeRemoteMigration()
+  }
+  return attempt()
 }
 
 /**
@@ -482,6 +506,7 @@ function applyInner(ctx) {
 
   async function detectRoute(text, history) {
     if (timeReply(text)) return { ...ruleRoute(text), mode: 'chat', engine: 'clock', detail: '直接读取北京时间' }
+    if (remoteMediaConfig().enabled) return { ...ruleRoute(text), detail: '远端模式使用规则路由' }
     const fresh = Date.now() - jev.at < 15000
     if (!fresh) {
       const probe = await probeJev(JEV_URL)
@@ -1091,14 +1116,16 @@ function applyInner(ctx) {
 
     try {
       if (path === `${ROUTE_PREFIX}/api/health`) {
-        const probe = await probeJev(JEV_URL)
+        const probe = remoteMediaConfig().enabled ? { ok: false, error: '远端模式使用规则路由' } : await probeJev(JEV_URL)
         jev.at = Date.now()
         jev.ok = probe.ok
         jev.models = probe.models || []
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.23.0',
+          version: '0.23.1',
+          remoteState: remoteStateStatus(),
+          remoteCleanup: remoteCleanupStatus(),
           initializationError,
           chatModel: defaultRoute() || null,
           toolAccess: [...live.values()].filter((row) => row.toolStats).map((row) => row.toolStats()),
@@ -1374,6 +1401,7 @@ function applyInner(ctx) {
         if (!filename || nodePath.basename(filename) !== filename || /[<>:"/\\|?*\x00-\x1f]/.test(filename)) return sendJson(res, 404, { ok: false, error: '没有这个文件' })
         if (method !== 'GET' && method !== 'HEAD') return sendJson(res, 405, { ok: false, error: '只支持读取文件' })
         const file = nodePath.join(dataDir(), kind, filename)
+        await ensureRemoteArtifact(file)
         if (!fs.existsSync(file) || !fs.statSync(file).isFile()) return sendJson(res, 404, { ok: false, error: '没有这个文件' })
         const total = fs.statSync(file).size, range = String(req.headers.range || '')
         const match = /^bytes=(\d+)-(\d*)$/.exec(range)
@@ -1535,6 +1563,7 @@ function applyInner(ctx) {
       if (path === `${ROUTE_PREFIX}/api/files/download`) {
         if (method !== 'GET') return sendJson(res, 405, { ok: false, error: '只支持 GET' })
         const target = resolveOutbox(url.searchParams.get('name') || '')
+        if (target) await ensureRemoteArtifact(target.path)
         if (!target) return sendJson(res, 404, { ok: false, error: '发件箱里没有这个文件' })
         try {
           res.writeHead(200, {
@@ -2206,7 +2235,7 @@ function applyInner(ctx) {
   const voiceWarmup = setTimeout(() => { void warmVoice().catch(() => {}) }, 1500)
   voiceWarmup.unref?.()
 
-  ctx.effect(() => () => {
+  ctx.effect(() => async () => {
     qq.stop()
     clearTimeout(memoryWarmup)
     clearTimeout(voiceWarmup)
@@ -2250,6 +2279,7 @@ function applyInner(ctx) {
     }
     unregisterRoute = undefined
     flush()
+    await flushRemoteState().catch(error => console.error('[dsh-mentor] 待同步记录已保留：', error.message))
     for (const id of [...live.keys()]) {
       const entry = live.get(id)
       Promise.resolve(entry?.handle?.dispose?.()).catch(() => {})
@@ -2647,6 +2677,7 @@ function registerMentorTool(ctx, deps, { entryOnly = false } = {}) {
     },
     async execute(args) {
       try {
+        await ensureRemoteArtifact(args?.path)
         const delivery = await prepareAudioDelivery(args?.path, args?.name)
         const row = handoverFile(delivery.file, delivery.name)
         if (!row) return { ok: false, text: '没交付成功：文件是空的。' }

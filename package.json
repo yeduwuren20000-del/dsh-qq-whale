@@ -1,6 +1,6 @@
 {
   "name": "dsh-qq-whale",
-  "version": "0.23.0",
+  "version": "0.23.1",
   "private": true,
   "type": "module",
   "main": "index.js",
@@ -38,7 +38,8 @@
     "LICENSE",
     "GETTING_STARTED.md",
     "VOICE_SETUP.md",
-    "RELEASE_0.23.0.md"
+    "RELEASE_0.23.1.md",
+    "REMOTE_SETUP.md"
   ],
   "engines": {
     "node": ">=20"
