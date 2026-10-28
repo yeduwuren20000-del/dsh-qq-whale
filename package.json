@@ -1,6 +1,6 @@
 {
   "name": "dsh-qq-whale",
-  "version": "0.21.8",
+  "version": "0.21.9",
   "private": true,
   "type": "module",
   "main": "index.js",
@@ -30,7 +30,7 @@
     "runtime/",
     "tools/",
     "requirements-speech.txt",
-    "RELEASE_0.21.8.md",
+    "RELEASE_0.21.9.md",
     "TOOLS.md",
     "INSTALL.cmd",
     "install.ps1",
@@ -68,6 +68,7 @@
     "verify:optimization": "node tools/verify-optimization.mjs",
     "verify:scroll": "node tools/verify-chat-scroll.mjs",
     "verify:media": "node tools/verify-media-speed.mjs",
+    "verify:voice": "node tools/verify-voice-clock.mjs",
     "verify:release": "node tools/verify-release.mjs"
   },
   "repository": {

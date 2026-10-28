@@ -102,13 +102,13 @@ await test('Comment replies clamp the daily cap and reject empty input before to
 })
 
 store.setSettings({ qq: { enabled: false }, autonomy: { enabled: false } })
-const listeners = new Set(), errorListeners = new Set(), createdOptions = [], disposers = [], sections = [], variables = new Map(), tools = new Map()
+const listeners = new Set(), errorListeners = new Set(), createdOptions = [], disposers = [], sections = [], contexts = [], variables = new Map(), tools = new Map()
 let route, modelCalls = 0, behavior = 'normal'
 const nativeHandover = { name: 'handover', output: { schema: {}, render() {} } }
 const globalTools = new Map([['handover', nativeHandover]])
 const toolContext = {
   tools: { schemas() { return [...tools.values()].map(({name,description,parameters}) => ({name,description,parameters})) }, restrict() { return () => {} }, register(def) { assert.ok(def.output && typeof def.output.render === 'function', `Tool ${def.name} must declare an output schema and renderer`); tools.set(def.name, def); return () => {} } },
-  get(name) { if (name === 'tools') return toolContext.tools; if (name === 'systemPrompt') return { section: (s) => sections.push(s), variable: (name, fn) => variables.set(name, fn) } },
+  get(name) { if (name === 'tools') return toolContext.tools; if (name === 'systemPrompt') return { context: (s) => contexts.push(s), section: (s) => sections.push(s), variable: (name, fn) => variables.set(name, fn) } },
 }
 const ctx = {
   tools: { register(def) { assert.ok(!globalTools.has(def.name), `Duplicate global tool: ${def.name}`); globalTools.set(def.name, def); return () => globalTools.delete(def.name) } },
@@ -180,8 +180,8 @@ try {
     const session = store.createSession({ title: 'test', mode: 'chat' })
     const response = await call('POST', 'turn', { sessionId: session.id, text: '你好', mode: 'chat' })
     assert.equal(response.statusCode, 200); assert.match(response.body, /本鲸在/)
-    assert.ok(sections.some((r) => r.name === 'mentor:clock'))
-    assert.match(variables.get('mentor_clock')(), /北京时间/)
+    assert.ok(contexts.some((r) => r.name === 'mentor:clock'))
+    assert.match(contexts.find((r) => r.name === 'mentor:clock').text(), /北京时间/)
     assert.ok(tools.has('companion')); assert.ok(tools.has('mediaEdit'))
     assert.ok(tools.has('handover')); assert.ok(tools.has('memory')); assert.ok(tools.has('sticker'))
     assert.equal(globalTools.get('handover'), nativeHandover)

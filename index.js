@@ -1,3 +1,4 @@
+import { replyPreference, deliverQQReply } from './lib/qq-reply.js'
 /**
  * 学伴（dsh-mentor）—— 宿主侧。
  *
@@ -131,7 +132,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.21.8',
+      version: '0.21.9',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -386,14 +387,15 @@ function applyInner(ctx) {
     setMood(nextMood)
 
     let answer = ''
-    let voicePlan = null
+    let voicePlan = null, songReply = null
     // 记忆按会话隔离：QQ 固定在一个 scope 上，轮转（换会话）也不会丢旧记忆。
     activeScope = 'qq'
     try {
       answer = await runTurn(session.id, msg.text, () => {}, {
         scene: { type: 'qq', kind: msg.scene, name: msg.nickname, chatId: msg.chatId },
-        userVoice: msg.voice, onReplyPlan: (plan) => { voicePlan = plan },
-        onProgress: async (text) => {
+        userVoice: msg.voice, onReplyPlan: (plan, meta) => { voicePlan = plan; songReply = meta?.song || null },
+        onProgress: async (text, detail) => {
+          if (detail?.kind === 'sing' || replyPreference(msg.text) === 'voice' || msg.voice || /唱(?:一首|首|歌|段)/.test(msg.text)) return
           await qq.sendMessage(msg.scene, msg.chatId, text)
           appendMessage(session.id, { role: 'mentor', text, mode: decided.mode, progress: true })
         },
@@ -410,20 +412,15 @@ function applyInner(ctx) {
     learnTick('', msg.text)
     // QQ 里聊完也补日记：她自己的本子不该只在桌面端才写。
     scheduleAutoDiary(session.id)
-    // 先发文字（看到就回），语音合成慢，放后台补一条，别让人干等。
-    await qq.sendMessage(msg.scene, msg.chatId, answer)
-    // voiceEnabled 没显式关掉就允许发语音（设置里空值不该等于「关」）。
-    const voiceAllowed = perceptionConfig().voiceEnabled !== false
-    if (voicePlan && voiceAllowed && answer.length <= 600) {
-      const plan = { ...voicePlan }
-      // 她自己没指定情绪时，用当前心情兜底，语音不至于每句都是同一个调子。
-      if (!plan.mood) plan.mood = moodView(getMood()).mood || ''
-      synthesizeVoice(answer, plan)
-        .then((audio) => qq.sendRecord(msg.scene, msg.chatId, audio.file))
-        .catch((error) => console.error('[dsh-mentor] 语音回复失败：', error.message))
-    }
-    // 说完话补一张表情包：失败/限流都不影响已经发出去的文字。
-    await maybeSendSticker(msg, answer).catch(() => {})
+    const plan = voicePlan ? { ...voicePlan, mood: voicePlan.mood || moodView(getMood()).mood || '' } : null
+    const result = await deliverQQReply({ text: answer, voicePlan: plan, voiceEnabled: perceptionConfig().voiceEnabled !== false, song: songReply }, {
+      synthesize: synthesizeVoice,
+      sendRecord: (file) => qq.sendRecord(msg.scene, msg.chatId, file),
+      sendText: (text) => qq.sendMessage(msg.scene, msg.chatId, text),
+    })
+    if (result.channel === 'text') await maybeSendSticker(msg, answer).catch(() => {})
+    if (result.error) console.error('[dsh-mentor] 语音交付失败，已按剩余内容回退：', result.error)
+
   }
 
   const qq = createQQBridge({
@@ -560,10 +557,9 @@ function applyInner(ctx) {
       const prompt = agentCtx?.get ? agentCtx.get('systemPrompt') : undefined
       if (!prompt) return
       prompt.section({ name: 'mentor:persona', order: 0.5, text: PERSONA, interpolate: false })
-      prompt.variable('mentor_clock', () => clockBlock())
-      prompt.section({ name: 'mentor:clock', order: 0.501, text: '{{mentor_clock}}' })
+      prompt.context({ name: 'mentor:clock', order: 130, text: () => clockBlock() })
       prompt.variable('mentor_voice', () => entry.scene?.type === 'qq'
-        ? `你能在这段QQ会话里发真实语音。${entry.userVoice ? '用户这轮发的是语音，你可以回语音，也可以用companion replyText选择文字。' : '你可以自己判断想说话还是打字；想发语音时调用companion replyVoice，然后正常写最终回答。'} 常用音色：${perceptionConfig().voice || '尚未选择；你可以调用companion voices试听前查看音色，再用chooseVoice选你喜欢的声音'}。声音是你自己的事：默认就一直用这个音色，不按情绪换、也不要每轮重选；只有你明确想换一个时才用 companion chooseVoice 换，换过会一直记住。语速可随情绪在0.8到1.2之间变化；想带情绪时在 replyVoice 里写 mood（开心/撒娇/温柔/兴奋/疲惫/委屈/调侃/认真），声音会跟着变。用户不方便听或要求文字时只回文字。不要输出语音标记，不要把工具参数当回复。`
+        ? `你能在这段QQ会话里发真实语音。${entry.userVoice ? '用户这轮发的是语音，你可以回语音，也可以用companion replyText选择文字。' : '你可以自己判断想说话还是打字；想发语音时调用companion replyVoice，然后正常写最终回答。'} 常用音色：${perceptionConfig().voice || '尚未选择；你可以调用companion voices试听前查看音色，再用chooseVoice选你喜欢的声音'}。声音身份固定使用同一份参考音色；情绪通过语气、语速和力度表达，不许换成另一个说话人，也不要每轮重选；只有你明确想换一个时才用 companion chooseVoice 换，换过会一直记住。语速可随情绪在0.8到1.2之间变化；想带情绪时在 replyVoice 里写 mood（开心/撒娇/温柔/兴奋/疲惫/委屈/调侃/认真），声音会跟着变。用户不方便听或要求文字时只回文字。不要输出语音标记，不要把工具参数当回复。`
         : '')
       prompt.section({ name: 'mentor:voice', order: 0.503, text: '{{mentor_voice}}' })
       // 性格卡：用户可改，每轮重新解析，所以改完下一条消息就生效。
@@ -693,12 +689,14 @@ function applyInner(ctx) {
     activeTurns += 1
     const entry = entryFor(mentorId)
     const run = turnChain.then(async () => {
-      entry.onProgress = async (text) => { emit('progress', { text }); await options.onProgress?.(text) }
+      entry.onProgress = async (text, detail) => { emit('progress', { text, ...detail }); await options.onProgress?.(text, detail) }
       entry.scene = options.scene || null
       entry.userVoice = Boolean(options.userVoice)
       entry.replyVoice = null
       entry.songResult = null
-      entry.replyText = /(?:只|用|发)文字|别发语音|不方便听/.test(text)
+      const preference = replyPreference(text)
+      entry.requireVoice = preference === 'voice'
+      entry.replyText = preference === 'text'
       currentQuery = text
       activeScope = mentorId
       currentScene = entry.scene ? `${entry.scene.kind === 'group' ? '群聊' : '私聊'}（${entry.scene.name || entry.scene.chatId}）` : ''
@@ -707,7 +705,7 @@ function applyInner(ctx) {
       const localReply = timeReply(text)
       if (localReply) {
         emit('delta', { text: localReply })
-        options.onReplyPlan?.(entry.replyText ? null : options.userVoice ? {} : null)
+        options.onReplyPlan?.(entry.replyText ? null : entry.requireVoice || options.userVoice ? {} : null)
         clearScene(); currentScene = ''
         return localReply
       }
@@ -803,7 +801,7 @@ function applyInner(ctx) {
         clearScene()
         currentScene = ''
       }
-      options.onReplyPlan?.(entry.replyText ? null : entry.replyVoice || (options.userVoice ? {} : null))
+      options.onReplyPlan?.(entry.replyText ? null : entry.replyVoice || (entry.requireVoice || options.userVoice ? {} : null), { song: entry.songResult })
       return answer
     })    // chain 只用于排队，不让一次失败毒死后面所有回合。
     entry.chain = run.then(
@@ -1152,7 +1150,7 @@ function applyInner(ctx) {
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.21.8',
+          version: '0.21.9',
           initializationError,
           chatModel: defaultRoute() || null,
           toolAccess: [...live.values()].filter((row) => row.toolStats).map((row) => row.toolStats()),

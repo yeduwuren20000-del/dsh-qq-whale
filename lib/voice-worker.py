@@ -7,8 +7,9 @@ import wave
 from pathlib import Path
 
 ROOT = Path(sys.argv[1])
-os.chdir(ROOT)
-ROOT = Path('.')
+if ROOT.is_dir():
+    os.chdir(ROOT)
+    ROOT = Path('.')
 ASR = None
 
 
@@ -61,6 +62,12 @@ def synthesize(job):
     instruction = job.get("instruction")
     if instruction:
         payload["instructions"] = str(instruction)
+    if job.get("voiceId"):
+        payload["voice"] = str(job["voiceId"])
+    if "seed" in job:
+        payload["seed"] = int(job["seed"])
+    if "temperature" in job:
+        payload["temperature"] = float(job["temperature"])
     if job.get("cfgScale"):
         payload["cfg_scale"] = float(job["cfgScale"])
     request = urllib.request.Request(

@@ -17,6 +17,8 @@ if (process.env.DSH_TEST_MEDIA_RUNTIME) {
 }
 const { prepareAudioDelivery, editMedia, probeMedia } = await import('../lib/media-edit.js')
 const { MAX_FILE, handover } = await import('../lib/files.js')
+const { setSettings } = await import('../lib/store.js')
+if (process.env.DSH_TEST_MEDIA_RUNTIME) setSettings({ sing: { localFfmpeg: path.join(process.env.DSH_MENTOR_DATA, 'runtime', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg') } })
 const { songVoiceSegments, createSongDelivery } = await import('../lib/song-delivery.js')
 let checks = 0
 async function test(name, fn) { await fn(); checks++; console.log('PASS', name) }
@@ -91,6 +93,7 @@ await test('Long songs split into short QQ voice messages without losing duratio
   for (const part of parts) {
     const meta = await probeMedia(part)
     assert.ok(Number(meta.format.duration) <= 50.2)
+    assert.equal(meta.streams[0].sample_rate, '24000'); assert.equal(meta.streams[0].channels, 1)
     assert.ok(fs.statSync(part).size < 12 * 1024 * 1024)
     duration += Number(meta.format.duration)
   }

@@ -22,5 +22,5 @@
 
 - RVC：使用自己的声模与兼容 infer.cli 的 Python 环境（需支持目录输入/输出），在 settings.sing 中设置 localRepo、localPython、localModel、localFfmpeg。它不属于默认下载项，不内置作者的模型。
 - Demucs：在独立 Python 环境安装人声分离工具，并设置 settings.sing.separatorPython。只对人声换声，再混回原伴奏。
-- Breeze-TTS-2：可作为额外本地语音后端，在设置中指定安装目录与模型；未配置时仍使用已选的语音组件。
+- Breeze-TTS-2：需要支持 /v1/voices 参考音色接口的本地版本，在设置中指定安装目录与模型。参考音色只存在本机数据目录；情绪改变语气、节奏与力度，不随机更换说话人。
 - 远程训练与推理：仅使用使用者明确配置的服务器，不预置作者服务器。夜间训练脚本、账号及素材不随插件发布。
