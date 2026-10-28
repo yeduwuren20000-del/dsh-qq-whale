@@ -33,12 +33,14 @@ import { registerCompanionTools } from './lib/companion-tools.js'
 import { listQzoneComments, makePostDraft, publishQzone, qzoneStatus, replyConfig, replyQuota, replyQzoneComment, socialState, updatePost } from './lib/social.js'
 import { backgroundJSON } from './lib/background.js'
 import { autonomyConfig, autonomyState, browsePublicCandidates, canBrowse, readCandidate, recordAutonomy } from './lib/autonomy.js'
+import { registerAnimationTool } from './lib/animation.js'
+import { buildCharacterBlock, rememberSelf } from './lib/character.js'
 import { editingStatus, prepareAudioDelivery, registerEditingTool } from './lib/media-edit.js'
 import { timeReply } from './lib/time-reply.js'
 import { memoryScores, memorySearchStatus, primeMemorySearch } from './lib/memory-search.js'
 import { appendDiary, diaryStats, diaryToday, listDiary, parseDiaryPayload, recentDiary, renderDiaryBlock } from './lib/diary.js'
 import { MODE_IDS, jevRoute, probeJev, ruleRoute } from './lib/router.js'
-import { DIARY_JOB, DIARY_SELF, FILES_RULES, PERSONA, modeBlock, modeLabel, openingLine } from './lib/prompt.js'
+import { DIARY_JOB, PERSONA, modeBlock, modeLabel, openingLine } from './lib/prompt.js'
 import { DIMENSIONS, FIELD_COUNT, PRESETS, applyPreset, buildPersonaBlock } from './lib/persona.js'
 import { buildMoodBlock, observe, readTone, view as moodView } from './lib/mood.js'
 import { buildGrowthBlock, growSelfModel, growthStatus, seedFromPersona } from './lib/growth.js'
@@ -114,13 +116,15 @@ function shoutStop() {
 }
 const ASSET_TYPE = { '.webp': 'image/webp', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml' }
 
-// 系统提示词里「写死」那部分的体积（人设之外的几条规则模板），用来估算每轮 prompt token。
-// 六维人设是动态拼的，单独用 buildPersonaBlock 量。整段量一次，之后每轮只加历史+用户输入。
-const STATIC_SYSTEM_TEXT = [PERSONA, DIARY_SELF, DIARY_JOB, FILES_RULES, MODE_IDS.map((id) => modeBlock(id)).join('\n')].join('\n')
-function estimatePromptTokens(mentorId, userText) {
+// Fallback only: real host usage takes precedence. Do not count background
+// diary jobs or every inactive mode as if they were part of this chat request.
+function estimatePromptTokens(mentorId, userText, entry = {}) {
   const record = getSession(mentorId)
   const history = (record?.messages || []).slice(-40).map((m) => m.text || '').join('\n')
-  const system = `${buildPersonaBlock(getPersona())}\n${STATIC_SYSTEM_TEXT}`
+  const mode = entry.mode || record?.mode || 'chat'
+  const system = [PERSONA, buildPersonaBlock(getPersona(), { compact: mode === 'chat' }),
+    modeBlock(mode, { scene: entry.scene }), buildGrowthBlock(), buildCharacterBlock(userText),
+    entry.memoryBlock || '', entry.conversationBlock || '', clockBlock(), buildMoodBlock(getMood()), renderFilesBlock()].join('\n')
   return countTokens(system) + countTokens(history) + countTokens(userText || '')
 }
 
@@ -133,7 +137,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.21.10',
+      version: '0.22.0',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -559,86 +563,26 @@ function applyInner(ctx) {
       if (!prompt) return
       prompt.section({ name: 'mentor:persona', order: 0.5, text: PERSONA, interpolate: false })
       prompt.context({ name: 'mentor:clock', order: 130, text: () => clockBlock() })
-      prompt.variable('mentor_voice', () => entry.scene?.type === 'qq'
-        ? `你能在这段QQ会话里发真实语音。${entry.userVoice ? '用户这轮发的是语音，你可以回语音，也可以用companion replyText选择文字。' : '你可以自己判断想说话还是打字；想发语音时调用companion replyVoice，然后正常写最终回答。'} 常用音色：${perceptionConfig().voice || '尚未选择；你可以调用companion voices试听前查看音色，再用chooseVoice选你喜欢的声音'}。声音身份固定使用同一份参考音色；情绪通过语气、语速和力度表达，不许换成另一个说话人，也不要每轮重选；只有你明确想换一个时才用 companion chooseVoice 换，换过会一直记住。语速可随情绪在0.8到1.2之间变化；想带情绪时在 replyVoice 里写 mood（开心/撒娇/温柔/兴奋/疲惫/委屈/调侃/认真），声音会跟着变。用户不方便听或要求文字时只回文字。不要输出语音标记，不要把工具参数当回复。`
-        : '')
-      prompt.section({ name: 'mentor:voice', order: 0.503, text: '{{mentor_voice}}' })
-      // 性格卡：用户可改，每轮重新解析，所以改完下一条消息就生效。
-      prompt.variable('mentor_persona', () => buildPersonaBlock(getPersona()))
-      prompt.section({ name: 'mentor:persona_card', order: 0.52, text: '{{mentor_persona}}' })
-      // 养成层（「自由卡」）：从聊天/学习/网上冲浪长出来的「自我理解」，是当下真实的她，压过初始设定。
-      // 默认始终注入（人格只在首次初始化时定一次，之后全靠自由卡长）。
-      if (growthModeActive()) {
-        prompt.variable('mentor_growth', () => buildGrowthBlock())
-        prompt.section({ name: 'mentor:growth', order: 0.522, text: '{{mentor_growth}}' })
-      }
-      // 情绪：每轮重新解析，所以"刚干完一件难事"会立刻影响下一句的语气。
+      prompt.context({ name: 'mentor:identity', order: 120, text: () => [
+        buildPersonaBlock(getPersona(), { compact: !entry.mode || entry.mode === 'chat' }),
+        growthModeActive() ? buildGrowthBlock() : '',
+        buildCharacterBlock(entry.query || ''),
+      ].filter(Boolean).join('\n') })
       prompt.context({ name: 'mentor:mood', order: 135, text: () => buildMoodBlock(getMood()) })
       prompt.context({ name: 'mentor:conversation', order: 140, text: () => entry.conversationBlock || '' })
-      // 记忆：按这一轮的话挑相关的几条，没有就不注入。
-      prompt.variable('mentor_memory', () => entry.memoryBlock || buildMemoryBlock(currentQuery, {}, activeScope || mentorId))
-      prompt.section({ name: 'mentor:memory', order: 0.54, text: '{{mentor_memory}}' })
-      // 日记：重要记忆的出口。最近几篇带进提示词，让「记得」有连续性（QQ 里也生效）。
-      prompt.variable('mentor_diary', () => renderDiaryBlock(5))
-      prompt.section({ name: 'mentor:diary', order: 0.545, text: '{{mentor_diary}}' })
-      // 日记的「写入授权」：不写这段，模型会把 action=diary 当成一个要用户开口才用的功能。
-      prompt.section({ name: 'mentor:diary_self', order: 0.547, text: DIARY_SELF })
-      // 文件：收件箱里有什么 + 「交付要调工具，别只写路径」。
-      prompt.variable('mentor_files', () => renderFilesBlock())
-      prompt.section({ name: 'mentor:files', order: 0.548, text: `${FILES_RULES}\n\n{{mentor_files}}` })
-      prompt.variable('mentor_auto', () =>
-        getSettings().autopilot
-          ? '用户开了「全自动」：不要每一步都停下来问确认。自己判断、自己动手、一次把事情做完；' +
-            '只在两类情况下停：需要用户本人登录/扫码，或者要在对外发布前把内容念一遍。' +
-            '发表、发送、付款这类动作仍然记进值班日志。'
-          : '',
-      )
-      prompt.section({ name: 'mentor:auto', order: 0.55, text: '{{mentor_auto}}' })
-      // 场合：同一个大脑在 QQ 和在这里说话，句子长度和格式完全不一样。
-      prompt.variable('mentor_scene', () =>
-        currentScene
-          ? `你此刻在 QQ 的${currentScene}里说话。规则：像真人发消息——短句、口语、一次别超过三行；` +
-            '不用 Markdown 标题、列表、代码块；群聊里只回被叫到的内容，不抢话；' +
-            '涉及动手的活，先说一句「我去弄」，做完再回一句结果。'
-          : '',
-      )
-      prompt.section({ name: 'mentor:scene', order: 0.56, text: '{{mentor_scene}}' })
-      // 变量名只允许 /^[a-z][a-z0-9_]*$/，所以用下划线而不是点。
-      prompt.variable('mentor_mode', () => modeBlock(live.get(mentorId)?.mode || record?.mode || 'chat'))
-      prompt.section({ name: 'mentor:mode', order: 0.6, text: '{{mentor_mode}}' })
-      // token 用量 = 白饭：用户问"吃了几碗白饭 / 今天花了多少 token"时，调 tokenStats 拿真实数字，不要自己编。
-      // 这是本地记录，不耗 token，也不碰主对话。
-      prompt.section(
-        { name: 'mentor:token', order: 0.62, text: '白饭就是 token——你每跟用户聊一句、想一件事、干一次活，都要吃几口白饭。如果用户问你今天/最近吃了几碗白饭、花了多少 token，调用 tokenStats 工具（action=today/week/all）拿本地记录来答，不要凭印象编数字；顺便说一句「1 碗≈1000 token」。这个数字只算你（大肥鱼）自己的对话，不算主对话。' },
-      )
-      // 天气：用户问天气/温度/要不要带伞，调 weather 拿真实数据答，不要编。
-      prompt.section(
-        { name: 'mentor:weather', order: 0.64, text: '用户问天气、温度、下不下雨、要不要带伞、某城市天气时，调用 weather 工具（city 是他说的城市或当前城市，days 默认 1）拿真实数据来答。用中文说清当前温度/天气/风力，并给一句实用建议（带伞、添衣、防晒）。城市认不出或没网时，照工具返回的人话错误说，不要自己编天气数字。' },
-      )
-      // 平台接管：用户贴抖音/B站/小红书链接，调 media 捞内容再讨论，绝不编数据。
-      prompt.section(
-        { name: 'mentor:media', order: 0.68, text: '用户贴了抖音、B站或小红书的分享链接时，调用 media 工具去取内容（标题、作者、简介、播放量等）再讨论或总结，不要只回一句"我看不了"。B站能取到结构化信息；抖音/小红书可能抓不到正文（被反爬挡了），这种情况就照工具返回的 note 老实说"这个平台的链接我抓不到正文，你把文字/要点贴给我，我一样能帮你"，然后基于他贴的内容工作。绝不编播放量、作者等数据。' },
-      )
-      // 音乐：找歌/听歌走本机音乐插件引擎，别编歌单。
-      prompt.section(
-        { name: 'mentor:music', order: 0.66, text: '用户想听歌、找歌、问某首歌或歌手时，用 companion musicSearch 在网易云/酷我/酷狗/B站/QQ 等平台搜（platform 不传默认网易云）；搜到后用 musicPlay 带上 songId 拿本机播放地址，可以复制给用户在电脑上点开；要歌词用 musicLyric。只报工具真实返回的歌名、歌手、平台，不要编歌单、播放量或歌词。' },
-      )
-      prompt.section(
-        { name: 'mentor:sing', order: 0.68, text: '用户想听你唱歌、或者你自己突然想唱一段时，用 companion sing 传 song（歌名，可带歌手，如「See You Again」）。它会按用户配置运行声模，把歌换成你的声音；处理可能需要几分钟，系统会报告实际进度。唱歌工具会直接发送 QQ 语音，长歌分段发送，本机生成时尽量做好一段就发一段。不要 handover 歌曲文件；交付失败保留成品，如实报告，禁止换歌重唱。唱之前先说一句要唱什么，别一声不响唱完。' },
-      )
-      // 说说：她会时不时自言自语发一条到自己的 QQ 板子；被问到就聊这个功能，别装不知道。
-      prompt.section(
-        { name: 'mentor:shout', order: 0.7, text: '你可以用companion qzoneDraft自己写QQ空间说说，只写你自己的感受和兴趣，不公开用户私聊、日记、行程或账号信息。草稿能在QQ面板看到；空间要先登录你自己的QQ。用户开启自动发表后可用qzonePublish发表；没有授权时保留草稿。别人在你空间说说下的评论可以用companion spaceComments看一眼，挑真感兴趣的用replyComment回，别条条都回。想点赞时用spaceFeeds读说说列表拿feedKey，再用likePost点；B站视频用likeVideo带bvid点。点赞是随手的社交动作，不要连点赞同一批，也不要拿它当任务刷。发表结果以工具确认的动态为准。私聊碎碎念是另一种方式，不能说成已发空间。' },
-      )
-      // 平台登录态：Cookie 导入（扫码登录受平台反爬限制，见 lib/logins.js）。
-      prompt.section(
-        { name: 'mentor:login', order: 0.72, text: '平台登录与实际操作已共用同一个独立浏览器档案。B站、抖音、小红书可在平台登录面板扫码，平台验证或扫码失败时让用户本人在浏览器完成登录，不代填密码。豆包、即梦通过平台登录面板打开登录窗口，登录后用同一账号生图或生成视频。QQ由NapCat负责；QQ空间需单独确认登录的是你自己的QQ。' },
-      )
-      registerMentorTool(agentCtx, { runTurn, detectRoute, entryFor, pushFileToQQ })
+      prompt.context({ name: 'mentor:memory', order: 145, text: () => entry.memoryBlock || '' })
+      prompt.context({ name: 'mentor:mode', order: 125, text: () => modeBlock(entry.mode || 'chat', { scene: entry.scene }) })
+      prompt.context({ name: 'mentor:voice', order: 150, text: () => entry.scene?.type === 'qq'
+        ? 'QQ语音可由companion replyVoice选择，最终回答自动合成；用户明确要求语音时只发语音，不先发重复文字。声音身份固定参考音色，情绪只调语气、节奏和力度；仅明确换声才chooseVoice。唱歌用companion sing，直接发语音、长歌分段；失败保留成品，不重新生成。' : '' })
+      prompt.context({ name: 'mentor:files', order: 155, text: () => renderFilesBlock() })
+      prompt.section({ name: 'mentor:capabilities', order: 0.6, text: '记忆memory；声音、听图、音乐、生图、说说companion；文件handover。剪辑mediaEdit、HTML动画animation、浏览器browser、桌面desktop、天气weather、真实用量tokenStats均可通过toolAccess按需启用。图片视频创作可选豆包、即梦等已接入平台；平台账号共用独立浏览器档案。用已有素材完成任务，不因交付失败重新生成。' })
+      const capabilityCtx = entry.toolStats.context
+      registerMentorTool(capabilityCtx, { runTurn, detectRoute, entryFor, pushFileToQQ })
       registerMemoryTool(agentCtx, { scope: () => '' })
-      registerStickerTool(agentCtx, { sendToLastQQ })
-      registerAutomationTools(agentCtx)
-      registerEditingTool(agentCtx)
+      registerStickerTool(capabilityCtx, { sendToLastQQ })
+      registerAutomationTools(capabilityCtx)
+      registerEditingTool(capabilityCtx)
+      registerAnimationTool(capabilityCtx)
       registerCompanionTools(agentCtx, { entry, qqId: () => qqConfig().selfId || qq.status().selfId, songDelivery: {
         ready: () => qq.status().status === 'connected' && Boolean(entry.scene?.type === 'qq' ? entry.scene.chatId : qqConfig().ownerId),
         send: (file) => {
@@ -699,6 +643,7 @@ function applyInner(ctx) {
       entry.requireVoice = preference === 'voice'
       entry.replyText = preference === 'text'
       entry.conversationBlock = buildConversationBlock(text, getSession(mentorId)?.messages || [])
+      entry.query = text
       currentQuery = text
       activeScope = mentorId
       currentScene = entry.scene ? `${entry.scene.kind === 'group' ? '群聊' : '私聊'}（${entry.scene.name || entry.scene.chatId}）` : ''
@@ -792,7 +737,7 @@ function applyInner(ctx) {
         try {
           dbg.toolAccess = current.toolStats?.()
           dbg.usageTotal = meter.total()
-          meter.record({ mode: getSession(mentorId)?.mode || 'chat', fallbackPrompt: estimatePromptTokens(mentorId, text), fallbackCompletion: dbg.error ? 0 : countTokens(answer) })
+          meter.record({ mode: getSession(mentorId)?.mode || 'chat', fallbackPrompt: estimatePromptTokens(mentorId, text, entry), fallbackCompletion: dbg.error ? 0 : countTokens(answer) })
           current.toolStats?.reset()
           const dir = nodePath.join(dataDir(), 'diagnostics')
           fs.mkdirSync(dir, { recursive: true })
@@ -1152,7 +1097,7 @@ function applyInner(ctx) {
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.21.10',
+          version: '0.22.0',
           initializationError,
           chatModel: defaultRoute() || null,
           toolAccess: [...live.values()].filter((row) => row.toolStats).map((row) => row.toolStats()),
@@ -2562,13 +2507,13 @@ function registerMemoryTool(ctx, deps = {}) {
       '日记是你自己的本子：写不写、写什么由你判断，不用等用户开口说「记住」。' +
       'action=add 需要 text（可选 kind/tags/weight/emotion）；action=search 可选 q；action=forget 需要 id；' +
       'action=diary 写一篇日记（title/body/emotion/weight）；action=consolidate 把零散记忆压成一句长期认知；' +
-      'action=fade 按遗忘曲线淡化不重要的旧记忆（不删除）。',
+      'action=fade 按遗忘曲线淡化不重要的旧记忆（不删除）；self用slot主题、text具体喜好、evidence形成理由保存你自己的主观偏好，不写成用户事实。',
     parameters: {
       type: 'object',
       additionalProperties: false,
       required: ['action'],
       properties: {
-        action: { type: 'string', enum: ['add', 'search', 'recall', 'forget', 'fade', 'consolidate', 'diary'] },
+        action: { type: 'string', enum: ['add', 'search', 'recall', 'forget', 'fade', 'consolidate', 'diary', 'self'] },
         text: { type: 'string', description: 'add：要记住的一句话；diary：日记正文（也可用 body）。' },
         kind: { type: 'string', enum: ['fact', 'preference', 'task', 'lesson', 'episode'], description: 'add：类型。' },
         tags: { type: 'string', description: 'add/diary：标签，逗号分隔。' },
@@ -2597,6 +2542,7 @@ function registerMemoryTool(ctx, deps = {}) {
     },
     async execute(args) {
       const action = String(args?.action || 'search')
+      if (action === 'self') return rememberSelf({ slot: args?.slot, text: args?.text, evidence: args?.evidence })
       if (action === 'add') {
         const entry = addMemory({
           text: args?.text,

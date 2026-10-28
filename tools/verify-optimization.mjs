@@ -122,6 +122,17 @@ try {
     assert.equal(ctx.tools.schemas(agent).length, 3)
     assert.equal(ctx.tools.schemas(other).length, 281)
   })
+  await test('Deferred local editing schemas load and unload without affecting other agents', async () => {
+    stats.context.tools.register(definition('mediaEdit', '视频剪辑批处理'))
+    assert.ok(!ctx.tools.schemas(agent).some((r) => r.name === 'mediaEdit'))
+    const found = await access.execute({ action: 'search', query: '剪辑' })
+    assert.equal(found.tools[0].name, 'mediaEdit')
+    await access.execute({ action: 'enable', names: ['mediaEdit'] })
+    assert.ok(ctx.tools.schemas(agent).some((r) => r.name === 'mediaEdit'))
+    assert.ok(!ctx.tools.schemas(other).some((r) => r.name === 'mediaEdit'))
+    stats.reset()
+    assert.ok(!ctx.tools.schemas(agent).some((r) => r.name === 'mediaEdit'))
+  })
   await test('JSON reflections receive no inherited tools and normal agents remain unchanged', () => {
     restrictReflectionTools(otherScope.ctx)
     assert.equal(ctx.tools.schemas(other).length, 0)

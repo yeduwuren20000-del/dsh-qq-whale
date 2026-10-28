@@ -107,7 +107,7 @@ let route, modelCalls = 0, behavior = 'normal'
 const nativeHandover = { name: 'handover', output: { schema: {}, render() {} } }
 const globalTools = new Map([['handover', nativeHandover]])
 const toolContext = {
-  tools: { schemas() { return [...tools.values()].map(({name,description,parameters}) => ({name,description,parameters})) }, restrict() { return () => {} }, register(def) { assert.ok(def.output && typeof def.output.render === 'function', `Tool ${def.name} must declare an output schema and renderer`); tools.set(def.name, def); return () => {} } },
+  tools: { schemas() { return [...tools.values()].map(({name,description,parameters}) => ({name,description,parameters})) }, restrict() { return () => {} }, register(def) { assert.ok(def.output && typeof def.output.render === 'function', `Tool ${def.name} must declare an output schema and renderer`); tools.set(def.name, def); return () => { if (tools.get(def.name) === def) tools.delete(def.name) } } },
   get(name) { if (name === 'tools') return toolContext.tools; if (name === 'systemPrompt') return { context: (s) => contexts.push(s), section: (s) => sections.push(s), variable: (name, fn) => variables.set(name, fn) } },
 }
 const ctx = {
@@ -182,7 +182,11 @@ try {
     assert.equal(response.statusCode, 200); assert.match(response.body, /本鲸在/)
     assert.ok(contexts.some((r) => r.name === 'mentor:clock'))
     assert.match(contexts.find((r) => r.name === 'mentor:clock').text(), /北京时间/)
-    assert.ok(tools.has('companion')); assert.ok(tools.has('mediaEdit'))
+    assert.ok(tools.has('companion')); assert.ok(!tools.has('mediaEdit')); assert.ok(!tools.has('animation'))
+    assert.ok(tools.size <= 4)
+    console.log('CHAT SURFACE', JSON.stringify({ tools: tools.size, schemaBytes: Buffer.byteLength(JSON.stringify(toolContext.tools.schemas())), promptCharacters: sections.reduce((n,r)=>n+String(r.text||'').length,0)+contexts.reduce((n,r)=>n+String(r.text?.()||'').length,0) }))
+    const enabled = await tools.get('toolAccess').execute({ action: 'enable', names: ['mediaEdit', 'animation', 'browser', 'sticker'] })
+    assert.equal(enabled.ok, true); assert.ok(tools.has('mediaEdit')); assert.ok(tools.has('animation'))
     assert.ok(tools.has('handover')); assert.ok(tools.has('memory')); assert.ok(tools.has('sticker'))
     assert.equal(globalTools.get('handover'), nativeHandover)
     assert.ok(tools.get('browser').parameters.properties.action.enum.includes('download'))

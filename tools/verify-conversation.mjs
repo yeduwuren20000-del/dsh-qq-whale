@@ -37,6 +37,7 @@ test('Existing personality data stays unchanged',()=>{
   assert.match(buildPersonaBlock(card),/稳定的身份与行为基线/)
   buildConversationBlock('困死了',[msg('还得上班')],now)
   assert.equal(JSON.stringify(card),before)
-  assert.ok(buildGrowthBlock().length>0)
+  // An unformed growth card contributes no boilerplate to every chat turn.
+  assert.equal(buildGrowthBlock(),'')
 })
 console.log(`VERIFIED ${checks} conversation checks; no model calls or real memory writes`)

@@ -65,7 +65,7 @@ try {
   console.log('PASS Existing two-factor authentication is respected')
   assert.equal(startComponents(['not-a-component']).ok, false)
   assert.equal(startComponents([]).ok, false)
-  assert.equal(COMPONENTS.length, 7)
+  assert.deepEqual(COMPONENTS.map(c => c.id).sort(), ['qq','browser','vision','asr','memory','tts','editing','autoCut','animation'].sort())
   console.log('PASS Tool selection validates the complete optional component catalog')
   const previous = { network: { websocketServers: [{ name: 'dsh-qq-whale', port: 3010 }] } }
   const configuredTwice = onebotConfig(onebotConfig(previous, { port: 3010, token: 'a' }), { port: 3010, token: 'b' })
