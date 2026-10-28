@@ -11,7 +11,7 @@ window.__ModuleLoader__.load({
     const API = '/dsh-mentor/api'
     const PANEL_ID = 'dsh-mentor'
     const TITLE = '大肥鱼'
-    const CLIENT_VERSION = 31
+    const CLIENT_VERSION = 32
 
     /** 本窗口不渲染表情包；宿主全局提示词里那套 [表情: …] 标记到这里会变成噪音，直接剥掉。 */
     const cleanText = (value) => String(value ?? '').replace(/\[表情[:：][^\]]*\]/g, '').replace(/\n{3,}/g, '\n\n').trim()
@@ -1015,9 +1015,8 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           setSetupState(body.setup || { done: true, mode })
           return body.setup
         } catch (error) {
-          // 失败也先本地标记，别卡住界面；下次进会再读真值。
-          setSetupState({ done: true, mode })
-          return { done: true, mode }
+          setNotice(`初始化保存失败：${error.message}`)
+          throw error
         }
       }, [])
 
@@ -2132,7 +2131,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       const prepare = async () => {
         setBusy(true); setNotice('')
         try {
-          const result = await apiJson(`${API}/components`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected }) })
+          const result = await apiJson(`${API}/components`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ selected: (selected || []).filter(id => !data?.components?.find(c => c.id === id)?.manual) }) })
           if (!result.ok) throw new Error(result.error || '工具准备未能开始')
           setData((old) => ({ ...old, job: result.job }))
         } catch (error) { setNotice(error.message) }
@@ -2147,7 +2146,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       return h(Drawer, { title: '工具准备', onClose: dismissThenClose },
         h('p', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, '勾选你想用的功能，再统一准备。没有勾选的模型不会下载。所有聊天图片和语音都在自己的电脑处理。'),
         !data ? h('p', { role: 'status' }, '正在检查本机工具…') : data.components.map((c) => h('div', { key: c.id, style: { padding: '12px 0', borderBottom: '1px solid var(--dm-line)' } },
-          h('label', { className: 'dm-check' }, h('input', { type: 'checkbox', checked: (selected || []).includes(c.id), disabled: busy || running, onChange: (e) => setSelected((old) => e.target.checked ? [...old, c.id] : old.filter((id) => id !== c.id)) }), `${c.name}${c.ready ? ' · 已就绪' : ''}`),
+          h('label', { className: 'dm-check' }, h('input', { type: 'checkbox', checked: (selected || []).includes(c.id), disabled: busy || running || c.manual, onChange: (e) => setSelected((old) => e.target.checked ? [...old, c.id] : old.filter((id) => id !== c.id)) }), `${c.name}${c.ready ? ' · 已就绪' : ''}`),
           h('div', { style: { lineHeight: 1.7 } }, c.tool),
           h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, c.size, '；', c.detail),
           h('a', { href: c.source, target: '_blank', rel: 'noreferrer', style: { color: 'var(--dm-brand)' } }, '工具官网'))),
@@ -2156,6 +2155,9 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           running ? `正在准备：${data.components.find((c) => c.id === data.job.current)?.name || '组件'}。首次下载可能需要几分钟，请保持 DSH 打开。` : data.job.errors?.length ? '部分工具未完成，可以重新尝试；已完成的工具可继续使用。' : '所选工具已准备完成。请到 QQ 面板扫码、到平台登录中登录你要用的网站。',
           data.job.errors?.map((e) => h('p', { key: e.id, className: 'dm-qq-hint', style: { whiteSpace: 'normal' } }, `${data.components.find((c) => c.id === e.id)?.name || e.id}：${e.error}`))) : null,
         notice ? h('p', { role: 'alert', className: 'dm-qq-hint' }, notice) : null,
+        h('div', { className: 'dm-sec' }, '说话与唱歌可选方案'),
+        h('p', { className: 'dm-setup-p' }, '以下大模型需单独安装，任选需要的方案。安装步骤见仓库的 VOICE_SETUP.md；不会随基础插件下载。'),
+        (data?.voiceChoices || []).map(tool => h('div', { key: tool.name, style: { marginBottom: '12px' } }, h('a', { href: tool.source, target: '_blank', rel: 'noreferrer' }, tool.name), h('p', { className: 'dm-setup-p' }, tool.use))),
         h('div', { className: 'dm-sec', style: { marginTop: '20px' } }, '生图、视频和网页剪辑'),
         h('p', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, '下面的网站无需全部开通。选择自己喜欢的平台，在「平台登录」完成登录，再让大肥鱼使用；账号额度和费用以各网站显示为准。'),
         (data?.websites || []).map((site) => h('div', { key: site.id, style: { padding: '10px 0', borderBottom: '1px solid var(--dm-line)', lineHeight: 1.7 } }, h('a', { href: site.url, target: '_blank', rel: 'noreferrer', style: { color: 'var(--dm-brand)' } }, site.name), h('div', null, site.capabilities), h('div', { className: 'dm-muted', style: { whiteSpace: 'normal' } }, site.note))),
@@ -2333,7 +2335,17 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         }), '让她自己决定回文字还是语音'),
         h('div', { className: 'dm-muted', style: { whiteSpace: 'normal' } },
           `常用声音：${state.qq?.perception?.voices?.find((v) => v.id === state.qq?.perception?.voice)?.label || '她还没选，可以在 QQ 里让她选一个喜欢的声音'}`),
+        h('div', { className: 'dm-qq-row' },
+          h('label', { htmlFor: 'dm-speech-engine' }, '说话方式'),
+          h('select', { id: 'dm-speech-engine', className: 'dm-input-sm', value: state.qq?.perception?.ttsBackend || 'breeze', disabled: Boolean(actionBusy), onChange: e => request('perception', { ttsBackend: e.target.value }) },
+            h('option', { value: 'breeze' }, '日常聊天 · 回复快'),
+            h('option', { value: 'cosyvoice', disabled: !state.qq?.perception?.cosyAvailable }, state.qq?.perception?.cosyAvailable ? '细腻语气 · 等待较久' : '细腻语气 · 需安装 CosyVoice'))),
         h('button', { className: 'dm-btn', disabled: Boolean(actionBusy) || !state.qq?.perception?.tts, onClick: () => request('perception', { action: 'sample' }) }, actionBusy === 'sample' ? '正在准备声音…' : '试听当前声音'),
+        h('div', { className: 'dm-qq-row' },
+          h('label', { htmlFor: 'dm-singing-engine' }, '唱歌方式'),
+          h('select', { id: 'dm-singing-engine', className: 'dm-input-sm', value: state.qq?.perception?.singingBackend || 'rvc', disabled: Boolean(actionBusy), onChange: e => request('perception', { singingBackend: e.target.value }) },
+            h('option', { value: 'rvc' }, 'RVC · 已训练声模'),
+            h('option', { value: 'seed-vc', disabled: !state.qq?.perception?.seedAvailable }, state.qq?.perception?.seedAvailable ? 'Seed-VC · 固定参考音色' : 'Seed-VC · 需安装模型'))),
         sample ? h('audio', { controls: true, src: sample, style: { display: 'block', width: '100%', marginTop: '8px' } }) : null,
         h('div', { className: 'dm-sec' }, '空间说说与碎碎念'),
         h('div', { className: 'dm-muted', style: { whiteSpace: 'normal', lineHeight: 1.7 } }, 'QQ聊天和QQ空间需要分别登录；空间未登录时会保留草稿，不会发表。'),
@@ -3425,7 +3437,8 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
             h('div', { className: 'dm-sub' }, '陪你闲聊的大肥鱼 · 自由、随性'),
           ),
           h('div', { className: 'dm-spacer' }),
-          // 顶栏只留「全自动」这一个开关。性格/记忆/QQ/足迹各有别处入口（活动栏 + 会话列表
+          h('button', { className: 'dm-btn dm-ghost', onClick: () => setPanel('guide') }, '使用教程'),
+          // 性格/记忆/QQ/足迹各有别处入口（活动栏 + 会话列表
           // 底部），再挂一排按钮就是纯重复；模式由后端判，前端没有开关位。
           h('button', {
             className: `dm-auto${state.autopilot ? ' on' : ''}`,
@@ -3641,6 +3654,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
         panel === 'login' ? h(LoginPanel, { onClose: close }) : null,
         panel === 'memory' ? h(MemoryDrawer, { state, onClose: close, startTab: memTab, onPick: () => fileRef.current?.click() }) : null,
         panel === 'components' ? h(ComponentsPanel, { onClose: close }) : null,
+        panel === 'guide' ? h(GettingStarted, { state, onOpen: openPanel, onClose: close }) : null,
         panel === 'qq' ? h(QQPanel, { state, onClose: close }) : null,
         panel === 'footprint' ? h(Drawer, { title: '足迹', onClose: close }, h(Footprint, { profile: state.profile })) : null,
         panel === 'tokens' ? h(TokenDrawer, { stats: state.tokenStats, onClose: close }) : null,
@@ -3653,12 +3667,36 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           ? h(SetupWizard, {
               state,
               onPick: async (choice) => {
-                if (choice && choice.preset) await state.savePersona({ preset: choice.preset })
-                await state.saveSetup('growth')
+                if (choice?.preset && !await state.savePersona({ preset: choice.preset })) throw new Error('性格未保存，请重试')
+                const saved = await state.saveSetup('growth')
+                if (!saved?.done) throw new Error('初始化未保存，请重试')
+                setPanel('guide')
               },
             })
           : null,
       )
+    }
+
+    function GettingStarted({ state, onOpen, onClose }) {
+      const action = (label, panel) => h('button', { className: 'dm-btn', onClick: () => onOpen(panel) }, label)
+      return h(Drawer, { title: '首次设置与使用教程', onClose },
+        h('p', { className: 'dm-setup-p' }, '先能聊天，再按需要连接 QQ 和其他工具。右上角的「使用教程」随时可以重新打开。'),
+        h('div', { className: 'dm-sec' }, '1 · 配好聊天模型'),
+        h('p', { className: 'dm-setup-p' }, '在 DSH 里配置并选好可用的聊天模型，然后给她发一句话。基础聊天、性格和关键词记忆不需要额外下载模型。'),
+        h('div', { className: 'dm-sec' }, '2 · 选初始性格和工具'),
+        h('p', { className: 'dm-setup-p' }, '第一次打开会让你选择初始性格。之后可查看六维卡片，日常偏好会从相处中逐渐积累。工具按功能选择，先准备 QQ；识图、语音、剪辑可以以后再加。'),
+        action('查看性格', 'persona'), ' ', action('打开工具准备', 'components'),
+        h('div', { className: 'dm-sec' }, '3 · QQ 扫码并绑定回复对象'),
+        h('p', { className: 'dm-setup-p' }, '准备好 QQ 组件后，打开 QQ 面板，点击「扫码登录 QQ」。用给她准备的独立账号扫码，在手机上确认；「主号 QQ」填写你平时使用的号码并保存。之后打开 DSH 自动连接。'),
+        action('打开 QQ 设置', 'qq'),
+        h('div', { className: 'dm-sec' }, '4 · 网站、空间与自主行为'),
+        h('p', { className: 'dm-setup-p' }, '在「平台登录」登录需要的网站。QQ 空间需单独扫码。主动聊天、点赞、说说的频率在 QQ 面板设置；自动发表需要另外开启，不开启就保留草稿。'),
+        action('打开平台登录', 'login'),
+        h('div', { className: 'dm-sec' }, '5 · 听语音、说话和唱歌'),
+        h('p', { className: 'dm-setup-p' }, '听写选 SenseVoice；日常说话选 Breeze，细腻语气可选 CosyVoice；唱歌可选 Seed-VC 或自己的 RVC 声模。说话与唱歌使用固定音色，长歌通过 QQ 语音分段发送。大模型需按工具说明单独安装。'),
+        h('div', { className: 'dm-sec' }, '数据保存在本机'),
+        h('p', { className: 'dm-setup-p' }, state.setup?.done ? '当前使用本机已保存的档案。升级、重装会继续读取原来的日记和记忆，不会因为重装自动清空；这不表示日记包含在 GitHub 安装包里。' : '新用户从空白档案开始，不预填其他人的日记、QQ 或经历。日记、账号和登录资料保存到当前电脑。'),
+        h('p', { className: 'dm-setup-p' }, '本机识图和语音不上传共享服务器。文字聊天使用你在 DSH 选择的模型；网站创作使用你登录的服务。用量可以在「白饭」查看。'))
     }
 
     /* ------------------------------------------------- 首次初始化向导 */
@@ -3666,10 +3704,14 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
       const { state, onPick } = props
       const [screen, setScreen] = useState(0)
       const [busy, setBusy] = useState(false)
+      const [error, setError] = useState('')
       const choose = async (choice) => {
-        setBusy(true)
+        if (busy) return
+        setBusy(true); setError('')
         try {
           await onPick(choice)
+        } catch (failure) {
+          setError(failure.message || '初始化没有保存，请重试')
         } finally {
           setBusy(false)
         }
@@ -3723,6 +3765,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
           'div',
           { className: 'dm-setup-card' },
           h('div', { className: 'dm-setup-h' }, '大肥鱼一开始是什么样？'),
+          error ? h('p', { className: 'dm-qq-hint', role: 'alert' }, error) : null,
           h(
             'div',
             { className: 'dm-setup-p' },
@@ -3734,14 +3777,14 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
             ...presets.map((p) =>
               h(
                 'div',
-                { key: p.id, className: 'dm-setup-opt', onClick: () => choose({ preset: p.id }) },
+                { key: p.id, className: 'dm-setup-opt', role: 'button', tabIndex: busy ? -1 : 0, 'aria-disabled': busy, onKeyDown: e => { if (['Enter', ' '].includes(e.key)) { e.preventDefault(); void choose({ preset: p.id }) } }, onClick: () => choose({ preset: p.id }) },
                 h('div', { className: 'dm-setup-opt-name' }, p.label),
                 h('div', { className: 'dm-setup-opt-desc' }, p.hint),
               ),
             ),
             h(
               'div',
-              { key: 'skip', className: 'dm-setup-opt', onClick: () => choose({ preset: null }) },
+              { key: 'skip', className: 'dm-setup-opt', role: 'button', tabIndex: busy ? -1 : 0, 'aria-disabled': busy, onKeyDown: e => { if (['Enter', ' '].includes(e.key)) { e.preventDefault(); void choose({ preset: null }) } }, onClick: () => choose({ preset: null }) },
               h('div', { className: 'dm-setup-opt-name' }, '先不定，让它自己长'),
               h('div', { className: 'dm-setup-opt-desc' }, '完全从零开始，初始就是出厂默认，全交给「自由卡」长出来。'),
             ),
@@ -3832,7 +3875,7 @@ textarea.dm-input-sm{resize:vertical;min-height:52px}
     exports.inject = ['slots']
     exports.apply = apply
     // 设计预览用：tools/preview.mjs 拿它把窗口渲染成静态页再截图，不用开 GUI。
-    exports.__design = { Stage, Bubble, MentorPage, MessageViewport, TokenDrawer, MODE_META, CSS, Drawer, PersonaDrawer, MemoryDrawer, QQPanel, ComponentsPanel, LoginPanel, Footprint, FileStrip, FilesTab, PERSONA_SCHEMA, DIM_IDS }
+    exports.__design = { Stage, SetupWizard, GettingStarted, Bubble, MentorPage, MessageViewport, TokenDrawer, MODE_META, CSS, Drawer, PersonaDrawer, MemoryDrawer, QQPanel, ComponentsPanel, LoginPanel, Footprint, FileStrip, FilesTab, PERSONA_SCHEMA, DIM_IDS }
     return module.exports
   },
 })

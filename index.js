@@ -138,7 +138,7 @@ export function apply(ctx) {
   let boot = { seq: 0 }
   try {
     boot = noteBoot(dataDir(), {
-      version: '0.22.1',
+      version: '0.23.0',
       where: 'apply',
       argv: process.argv.slice(1, 3).join(' ').slice(0, 120),
     })
@@ -1098,7 +1098,7 @@ function applyInner(ctx) {
         jev.detail = probe.ok ? '本地决策模型在线' : probe.error || '离线'
         return sendJson(res, 200, {
           ok: true,
-          version: '0.22.1',
+          version: '0.23.0',
           initializationError,
           chatModel: defaultRoute() || null,
           toolAccess: [...live.values()].filter((row) => row.toolStats).map((row) => row.toolStats()),
@@ -1292,6 +1292,11 @@ function applyInner(ctx) {
           return sendJson(res, 200, { ok: true, url: `${ROUTE_PREFIX}/api/voice/${encodeURIComponent(nodePath.basename(audio.file))}`, voice: audio.voice })
         }
         if (typeof body.voiceEnabled === 'boolean') setSettings({ perception: { ...(getSettings().perception || {}), voiceEnabled: body.voiceEnabled } })
+        if (['breeze', 'cosyvoice'].includes(body.ttsBackend)) {
+          stopPerception()
+          setSettings({ perception: { ttsBackend: body.ttsBackend } })
+        }
+        if (['rvc', 'seed-vc'].includes(body.singingBackend)) setSettings({ sing: { engine: body.singingBackend } })
         return sendJson(res, 200, { ok: true, ...(await perceptionStatus()) })
       }
 
